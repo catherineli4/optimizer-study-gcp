@@ -165,9 +165,12 @@ class LrBatchSweep:
             # Schedule
             "scheduler": self.scheduler,
             "global_batch_size": gbs,
-            # Derived from the batch size, so the batch axis stays within memory.
-            "rank_microbatch_size": max(SEQUENCE_LENGTH, gbs // gpus // 8),
-            "eval_rank_microbatch_size": max(SEQUENCE_LENGTH, gbs // gpus // 64),
+            # Derived from the batch size but CAPPED at 64K tokens: the LM-head
+            # logits scale with microbatch tokens (262K tokens -> ~49 GiB in
+            # bf16, OOM on 80GB) — the cap trades gradient-accumulation steps
+            # for memory and keeps the global batch (and the math) identical.
+            "rank_microbatch_size": max(SEQUENCE_LENGTH, min(gbs // gpus // 8, 65_536)),
+            "eval_rank_microbatch_size": max(SEQUENCE_LENGTH, min(gbs // gpus // 64, 65_536)),
             "validation_eval_interval": self.validation_eval_interval,
             # Parallelism & compilation
             "compile_model": True,
