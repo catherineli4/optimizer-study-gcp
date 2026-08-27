@@ -11,14 +11,14 @@ from launch_jolmo.training import JolmoModel, CPTModel, ModelEvaluation
 # ---------------------------------------------------------------------------
 
 CPT_DATASETS: List[str] = [
-    # "tulu", done
-    # "starcoder",
-    # "musicpile",
-    # "alpaca",
+    "tulu", 
+    "starcoder",
+    "musicpile",
+    "alpaca",
     "gsm8k",
     # "siqa",
     # "open-platypus",
-    # "stackmathqa",
+    "stackmathqa",
     # "helpsteer",
 ]
 CPT_TOKENS: int = 20_000_000   # 100 M tokens per CPT run

@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Evaluate saved multi-seed perturbed checkpoints and average DCLM_heldout loss.
 
-For each seed under ``{parent}/seed_XXX/final-unsharded/``, runs validate.py
-with the provided eval config (model.path overwritten per seed), then writes a
-JSON with per-seed losses and their mean.
+For each seed under ``{parent}/seed_XXX/final-unsharded/``, evaluates the
+checkpoint with the provided eval config, then writes a JSON with per-seed
+losses and their mean.
+
+All seeds share one process: the transformer is built once, the eval batches
+are read from disk once, and each seed only swaps in its state dict. (The
+previous version shelled out to validate.py per seed — 10 torch imports, 10
+model constructions, and 10 re-reads of the eval data per task.)
 """
 
 from __future__ import annotations
@@ -11,7 +16,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from typing import Any, Dict, List, Sequence
 
@@ -19,7 +23,7 @@ import yaml
 
 
 def _losses_from_eval(data: dict) -> Dict[str, float]:
-    """Extract scalar losses from a validate.py JSON output."""
+    """Extract scalar losses from a validate.py-shaped eval dict."""
     losses: Dict[str, float] = {}
     overall = (data.get("overall") or {}).get("loss")
     if overall is not None:
@@ -103,7 +107,7 @@ def main() -> int:
     parser.add_argument(
         "--validate-script",
         required=True,
-        help="Path to JOLMo/src/scripts/validate.py",
+        help="Path to JOLMo/src/scripts/validate.py (imported, not spawned)",
     )
     parser.add_argument("--output", required=True, help="Path for averaged eval JSON")
     args = parser.parse_args()
@@ -112,34 +116,87 @@ def main() -> int:
     if not seeds:
         raise SystemExit("--seeds must be a non-empty comma-separated list")
 
+    # Reuse validate.py's helpers (batching, loss, model discovery) in-process.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(args.validate_script)))
+    import validate as V  # noqa: E402
+    import numpy as np  # noqa: E402
+    import torch  # noqa: E402
+    from olmo_core.nn.transformer import TransformerConfig  # noqa: E402
+
     with open(args.eval_config, "r", encoding="utf-8") as f:
-        eval_cfg_template = yaml.safe_load(f)
+        eval_cfg = yaml.safe_load(f)
 
-    sample_losses: List[Dict[str, float]] = []
-    work_dir = os.path.join(args.parent_dir, "_eval_tmp")
-    os.makedirs(work_dir, exist_ok=True)
+    chunk_size = int(eval_cfg["chunk_size"])
+    batch_size = int(eval_cfg.get("batch_size", 8))
+    device = V.detect_device(eval_cfg.get("device"))
 
-    for i, seed in enumerate(seeds):
-        ckpt_dir = os.path.join(args.parent_dir, seed_subdir(seed), "final-unsharded")
-        model_pt = os.path.join(ckpt_dir, "model.pt")
-        if not os.path.exists(model_pt):
-            raise FileNotFoundError(f"missing seed checkpoint: {model_pt}")
-
-        eval_cfg = dict(eval_cfg_template)
-        eval_cfg["model"] = dict(eval_cfg_template.get("model") or {})
-        eval_cfg["model"]["path"] = ckpt_dir
-
-        sample_cfg_path = os.path.join(work_dir, f"seed_{seed:03d}-eval.yaml")
-        sample_out_path = os.path.join(work_dir, f"seed_{seed:03d}-eval.json")
-        with open(sample_cfg_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(eval_cfg, f)
-
-        print(f"  seed {i + 1}/{len(seeds)} (seed={seed}) → {ckpt_dir}")
-        subprocess.check_call(
-            ["python3", args.validate_script, sample_cfg_path, "--output", sample_out_path]
+    # Read the eval data once and reuse the batches for every seed.
+    cached_batches = []
+    for ds in eval_cfg["validation_datasets"]:
+        batches = list(
+            V.iter_batches_memmap(
+                ds["paths"], chunk_size, batch_size, ds.get("max_instances")
+            )
         )
-        with open(sample_out_path, "r", encoding="utf-8") as f:
-            sample_losses.append(_losses_from_eval(json.load(f)))
+        cached_batches.append((ds["name"], batches))
+
+    model = None
+    sample_losses: List[Dict[str, float]] = []
+
+    with torch.no_grad():
+        for i, seed in enumerate(seeds):
+            ckpt_dir = os.path.join(args.parent_dir, seed_subdir(seed), "final-unsharded")
+            state_path = V.find_model_state_path(ckpt_dir)
+
+            if model is None:
+                # All seeds share the base architecture: build the model once.
+                cfg_path = V.find_config_json_near(os.path.dirname(state_path))
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    exp_cfg = json.load(f)
+                if "model" not in exp_cfg:
+                    raise RuntimeError(
+                        f"Invalid config at '{cfg_path}': missing 'model' section."
+                    )
+                model_cfg = TransformerConfig.from_dict(exp_cfg["model"])
+                model = model_cfg.build(init_device="cpu").to(device=device)
+                model.eval()
+
+            state = torch.load(state_path, map_location="cpu")
+            model.load_state_dict(state, strict=True)
+            del state
+
+            print(f"  seed {i + 1}/{len(seeds)} (seed={seed}) → {ckpt_dir}")
+            totals: Dict[str, Dict[str, Any]] = {}
+            overall_sum = 0.0
+            overall_tok = 0
+            for name, batches in cached_batches:
+                lsum = 0.0
+                ntok = 0
+                for np_batch in batches:
+                    ids = torch.from_numpy(np_batch.astype(np.int64)).to(device)
+                    with torch.autocast(
+                        device.type,
+                        dtype=torch.bfloat16,
+                        enabled=device.type == "cuda",
+                    ):
+                        logits = model(input_ids=ids)
+                    s, n = V.per_instance_loss_from_logits(logits.float(), ids)
+                    lsum += float(s.sum().item())
+                    ntok += int(n.sum().item())
+                totals[name] = {
+                    "loss": (lsum / ntok) if ntok > 0 else None,
+                    "num_tokens": ntok,
+                }
+                overall_sum += lsum
+                overall_tok += ntok
+
+            seed_result = {
+                "overall": {
+                    "loss": (overall_sum / overall_tok) if overall_tok > 0 else None,
+                },
+                "by_label": totals,
+            }
+            sample_losses.append(_losses_from_eval(seed_result))
 
     averaged = average_seed_losses(
         sample_losses, seeds=seeds, gamma=args.gamma,

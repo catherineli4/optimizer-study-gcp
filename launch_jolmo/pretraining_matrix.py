@@ -47,6 +47,7 @@ from launch_jolmo.perturb import (
     build_perturbed_model_evaluations,
     build_multi_seed_perturbed_models,
     build_multi_seed_perturbed_evaluations,
+    LADDER_GAMMAS,
 )
 from launch_jolmo.interpolate import (
     build_interpolated_models,
@@ -88,7 +89,7 @@ NUM_PROCESSES = int(os.environ.get(
     "OPTIM_NUM_PROCESSES",
     str(_PROFILE.get("num_processes", 2)),
 ))
-CHINCHILLAS: List[int] = list(_PROFILE["chinchillas"])   # token-budget multipliers that exist for this size
+CHINCHILLAS: List[float] = list(_PROFILE["chinchillas"])  # token-budget multipliers (may be fractional, e.g. 0.25)
 
 # Pretrain batch & context. CPT uses its OWN (smaller) batch/context — see
 # CPT_GLOBAL_BATCH_SIZE / CPT_SEQUENCE_LENGTH in launch_jolmo/cpt.py.
@@ -136,9 +137,11 @@ def _base_tokens_for(model_type: str) -> int:
 BASE_TOKENS = _base_tokens_for(MODEL_TYPE)    # tokens at chinchilla-1
 
 
-def _tokens_for(chinchilla: int) -> Dict[str, Any]:
+def _tokens_for(chinchilla: float) -> Dict[str, Any]:
     """Return the schedule params that depend on chinchilla multiplier."""
-    n_tokens = BASE_TOKENS * chinchilla
+    # int() keeps fractional chinchillas (0.25, 0.5) from leaking float
+    # n_tokens / warmup_steps into the generated YAML.
+    n_tokens = int(BASE_TOKENS * chinchilla)
     total_steps = n_tokens // GLOBAL_BATCH_SIZE
     return {
         "n_tokens": n_tokens,
@@ -224,7 +227,43 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
             },
         },
     },
-    # "0.3B": fill in after LR tuning; until then PT_LR_SWEEP is used.
+    # Optimal-LR slots — fill in after LR tuning; a None cell (or missing key)
+    # falls back to PT_LR_SWEEP for that chinchilla.
+    "0.3B": {
+        "wsd": {
+            "adamw": {
+                0.25: 1e-3,
+                0.5: 2.5e-3,
+                1: 2.5e-3,
+                2: 2.5e-3,
+                4: 2.5e-3,
+                8: 2.5e-3,
+            },
+            "muon": {
+                # (muon_lr, adamw_component_lr)
+                0.25: (2.0e-2, 1e-3),
+                0.5: (1.4e-2, 2.5e-3),
+                1: (2.0e-2, 2.5e-3),
+                2: (1.4e-2, 2.5e-3),
+                4: (1.4e-2, 2.5e-3),
+                8: (2.0e-2, 2.5e-3),
+            },
+        },
+    },
+    "0.6B": {
+        "wsd": {
+            "adamw": {
+                0.25: 2.5e-3,
+                0.5: 2.5e-3,
+                1: 2.5e-3,
+            },
+            "muon": {
+                0.25: (1.4e-2, 2.5e-3),   # (muon_lr, adamw_component_lr)
+                0.5: (1.4e-2, 2.5e-3),
+                1: (1.4e-2, 2.5e-3),
+            },
+        },
+    },
     # Add a tuned table for each new MODEL_TYPE here; a size left out falls back
     # entirely to PT_LR_SWEEP.
 }
@@ -334,7 +373,7 @@ diversity_val_chunks = tuple(
 
 DCLM_HELDOUT_PART = DCLM_MAX_PARTS - 1          # 59 — last part, never trained on
 DCLM_HELDOUT_SHARD = DCLM_SHARDS_PER_PART - 1   # 4  — last shard of that part
-DCLM_HELDOUT_INSTANCES = 8192                   # sequences to score per eval
+DCLM_HELDOUT_INSTANCES = 1024                   # sequences to score per eval
 
 dclm_heldout_val_chunks = (
     (
@@ -492,7 +531,8 @@ cpt_muon_models = build_cpt_models(
 cpt_muon_pretrain_adamw_ft = build_cpt_models(pretrain_muon_wsd, cpt_optimizers=["adamw"])
 # AdamW-pretrained models finetuned with Muon CPT optimizer
 cpt_adamw_pretrain_muon_ft = build_cpt_models(pretrain_adamw_wsd, cpt_optimizers=["muon"], muon_adamw_multiplier=0.25)
-cpt_models = cpt_adamw_models
+# cpt: adamw bases -> adamw CPT, plus muon bases -> BOTH muon and adamw CPT.
+cpt_models = cpt_adamw_models + cpt_muon_models
 
 
 # ---------------------------------------------------------------------------
@@ -618,6 +658,50 @@ cpt_all_bases = cpt_all_adamw_bases + cpt_all_muon_bases
 cpt_all_models = cpt_all_adamw_models + cpt_all_muon_models
 
 
+def _discover_every_base(opt: str) -> ArtifactSet:
+    """EVERY JolmoModel that exists on GCS for this optimizer and CHINCHILLAS —
+    all pretrain LRs, not just the tuned/next-above-optimal one."""
+    runs = _existing_jolmo_runs()
+    models = []
+    for chinchilla in CHINCHILLAS:
+        schedule = _tokens_for(chinchilla)
+        train_chunks = _dclm_chunks_for_tokens(schedule["n_tokens"])
+        common = {**SHARED_MODEL_PARAMS, **schedule, "scheduler": "wsd",
+                  "train_chunks": train_chunks}
+        prefix = f"MuonExpt3-{MODEL_TYPE}-chinchilla-{chinchilla}-{opt}-"
+        for run in sorted(runs):
+            if not (run.startswith(prefix) and run.endswith("-wsd")):
+                continue
+            if opt == "adamw":
+                m = re.search(r"-adamw-lr([0-9.eE+\-]+)-wsd$", run)
+                if not m:
+                    continue
+                kw = dict(optimizer="adamw", learning_rate=float(m.group(1)))
+            else:
+                m = re.search(r"-muon-muonlr([0-9.eE+\-]+)-adamwlr([0-9.eE+\-]+)-wsd$", run)
+                if not m:
+                    continue
+                kw = dict(optimizer="muon", muon_lr=float(m.group(1)),
+                          learning_rate=float(m.group(2)))
+            models.append(JolmoModel(model_name=run, **common, **kw))
+    print(f"[cpt-all-lrs] discovered {len(models)} existing {opt} base(s) across chinchillas {CHINCHILLAS}")
+    return ArtifactSet(models)
+
+
+# CPT every existing base at every PT LR: adamw bases -> adamw CPT; muon bases
+# -> BOTH muon and adamw CPT (same convention as the main `cpt` stage).
+if _WANT_CPT_ALL:
+    _all_lrs_adamw_bases = _discover_every_base("adamw") if "adamw" in OPTIMIZERS else ArtifactSet([])
+    _all_lrs_muon_bases = _discover_every_base("muon") if "muon" in OPTIMIZERS else ArtifactSet([])
+    cpt_all_lrs_models = (
+        build_cpt_models(_all_lrs_adamw_bases)
+        + build_cpt_models(_all_lrs_muon_bases, cpt_optimizers=["muon", "adamw"],
+                           muon_adamw_multiplier=0.25)
+    )
+else:
+    cpt_all_lrs_models = ArtifactSet([])
+
+
 # ---------------------------------------------------------------------------
 # Muon alpha sweep  (muon-sweep)
 # — CPT the muon-pretrained models while varying alpha = the muon→adamw LR ratio
@@ -646,8 +730,8 @@ for _alpha in MUON_ALPHA_SWEEP:
 perturbed_adamw_models = build_perturbed_models(pretrain_adamw_wsd)
 perturbed_muon_models  = build_perturbed_models(pretrain_muon_wsd)
 
-multiseed_perturbed_adamw_models = build_multi_seed_perturbed_models(pretrain_adamw_wsd)
-multiseed_perturbed_muon_models  = build_multi_seed_perturbed_models(pretrain_muon_wsd)
+multiseed_perturbed_adamw_models = build_multi_seed_perturbed_models(pretrain_adamw_wsd, gammas=LADDER_GAMMAS)
+multiseed_perturbed_muon_models  = build_multi_seed_perturbed_models(pretrain_muon_wsd, gammas=LADDER_GAMMAS)
 
 
 # ---------------------------------------------------------------------------
@@ -701,6 +785,7 @@ pretrain_muon_evals  = pretrain_muon_wsd_evals
 _dclm = dict(extra_val_chunks=dclm_heldout_val_chunks,
              extra_val_max_instances=DCLM_HELDOUT_INSTANCES)
 cpt_evals                  = build_cpt_model_evaluations(cpt_models, **_dclm)
+cpt_all_lrs_evals          = build_cpt_model_evaluations(cpt_all_lrs_models, **_dclm)
 cpt_muon_pretrain_adamw_ft_evals = build_cpt_model_evaluations(cpt_muon_pretrain_adamw_ft, **_dclm)
 cpt_adamw_pretrain_muon_ft_evals = build_cpt_model_evaluations(cpt_adamw_pretrain_muon_ft, **_dclm)
 
@@ -941,9 +1026,12 @@ else:
 # Logit cosine: per-token cos(ℓ_adamw, ℓ_muon) for each matched chinchilla pair
 # ---------------------------------------------------------------------------
 
-def _parse_chinchilla_from_run(run_name: str) -> Optional[int]:
-    m = re.search(r"-chinchilla-(\d+)-", run_name)
-    return int(m.group(1)) if m else None
+def _parse_chinchilla_from_run(run_name: str) -> Optional[float]:
+    m = re.search(r"-chinchilla-([0-9.]+)-", run_name)
+    if not m:
+        return None
+    v = float(m.group(1))
+    return int(v) if v.is_integer() else v
 
 
 def _logit_cosine_evals(adamw_bases: ArtifactSet, muon_bases: ArtifactSet) -> ArtifactSet:

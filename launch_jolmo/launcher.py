@@ -33,6 +33,9 @@ from launch_jolmo.pt_sweep_60m_chin4 import (
     pt60m4_cpt_bs_sweep,
     pt60m4_cpt_all,
     pt60m4_cpt_evals,
+    pt60m4_full_grid,
+    pt60m4_cpt_full_grid,
+    pt60m4_cpt_full_grid_evals,
     pt60m4_lr_sweep_evals,
     pt60m4_wd_sweep_evals,
     pt60m4_bs_sweep_evals,
@@ -44,7 +47,9 @@ from launch_jolmo.pretraining_matrix import (
     cpt_muon_pretrain_adamw_ft,
     cpt_adamw_pretrain_muon_ft,
     cpt_models,
-    cpt_all_models,        # CPT over every TRAINED pretrained model (full LR sweep)
+    cpt_all_models,
+    cpt_all_lrs_models,
+    cpt_all_lrs_evals,        # CPT over every TRAINED pretrained model (full LR sweep)
     cpt_all_adamw_models,
     cpt_all_muon_models,
     cpt_all_bases,         # the discovered base JolmoModels (for dependency resolution)
@@ -173,6 +178,9 @@ executor.stage("pt60m4-cpt-wd-sweep-muon", pt60m4_cpt_wd_sweep_muon)  # muon-pre
 executor.stage("pt60m4-cpt-bs-sweep",    pt60m4_cpt_bs_sweep)
 executor.stage("pt60m4-cpt-all",         pt60m4_cpt_all)
 executor.stage("pt60m4-cpt-evals",       pt60m4_cpt_evals)
+executor.stage("pt60m4-full-grid",       pt60m4_full_grid)
+executor.stage("pt60m4-cpt-full-grid",   pt60m4_cpt_full_grid)
+executor.stage("pt60m4-cpt-full-grid-evals", pt60m4_cpt_full_grid_evals)
 # Pretrain evals for the swept models (held-out DCLM + diversity-v2 val sets).
 executor.stage("pt60m4-lr-sweep-evals",  pt60m4_lr_sweep_evals)
 executor.stage("pt60m4-wd-sweep-evals",  pt60m4_wd_sweep_evals)
@@ -197,6 +205,20 @@ executor.stage("cpt-all-muon",         cpt_all_muon_models)
 # The discovered base models the CPT runs depend on (registered so the executor's
 # identity-based dependency check resolves; not retrained — they exist on GCS).
 executor.stage("cpt-all-bases",        cpt_all_bases)
+executor.stage("cpt-all-lrs",          cpt_all_lrs_models)
+executor.stage("eval-cpt-all-lrs",     cpt_all_lrs_evals)
+
+# LR x batch-size cross-product sweeps (launch_jolmo/lr_bs_sweep.py)
+from launch_jolmo.lr_bs_sweep import SWEEPS as LRBS_SWEEPS
+for _sweep in LRBS_SWEEPS:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+
+# Finetuning cross-product sweeps (launch_jolmo/ft_sweep.py)
+from launch_jolmo.ft_sweep import SWEEPS as FT_SWEEPS
+for _sweep in FT_SWEEPS:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
 # Muon alpha sweep: CPT muon models across alpha = muon→adamw LR ratio.
 executor.stage("muon-sweep",           muon_sweep_models)
 

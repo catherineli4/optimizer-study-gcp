@@ -31,7 +31,7 @@ PROFILES: Dict[str, Dict] = {
     "60M": {
         "project": "Optim-60M-tuning",
         "model_type": "0.06B",
-        "chinchillas": [1, 2, 4, 8, 16, 32, 64, 128],
+        "chinchillas": [1, 2, 4, 8],   # trimmed from [1..128] for the chin-1-8 CPT pass
         "num_processes": 8,
     },
     "100M": {
@@ -47,7 +47,15 @@ PROFILES: Dict[str, Dict] = {
         # PT_LR_SWEEP until a table is filled in under PT_LR_BY_MODEL["0.3B"].
         "project": "Optim-300M-tuning",
         "model_type": "0.3B",
-        "chinchillas": [4],
+        "chinchillas": [1,2,4, 8],
+        "num_processes": 8,
+    },
+    "600M": {
+        # 0.6B study. No tuned PT LRs yet — pretraining_matrix falls back to
+        # PT_LR_SWEEP until the PT_LR_BY_MODEL["0.6B"] slots are filled in.
+        "project": "Optim-600M-tuning",
+        "model_type": "0.6B",
+        "chinchillas": [0.25, 0.5, 1],
         "num_processes": 8,
     },
 }

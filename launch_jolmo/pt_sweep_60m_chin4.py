@@ -394,6 +394,35 @@ def _cpt_muon_for(bases: ArtifactSet, label: str) -> ArtifactSet:
     return _cpt_muon(bases)
 
 
+# ---------------------------------------------------------------------------
+# Full cross-product grid — matches the 210 PTSweep60M-* models on GCS exactly:
+# {6 adamw | 8 muon} core LRs x 5 WDs x 3 batch sizes, with every LR (and the
+# muon adamw component) scaled by sqrt(batch/1M) via _scaled_lr.
+# ---------------------------------------------------------------------------
+
+FULL_GRID_LR_ADAMW: List[float] = [3.5e-3, 5e-3, 7e-3, 1e-2, 1.4e-2, 2e-2]
+FULL_GRID_LR_MUON: List[Tuple[float, float]] = [
+    (5e-3, 7e-3), (7e-3, 7e-3), (1e-2, 7e-3), (1.4e-2, 7e-3),
+    (2e-2, 7e-3), (2.8e-2, 7e-3), (4e-2, 7e-3), (5.6e-2, 7e-3),
+]
+
+
+def build_full_grid() -> ArtifactSet:
+    if not _SIZE_OK:
+        return _blocked("pt60m4-full-grid",
+                        f"OPTIM_SIZE resolves to {_PROFILE['model_type']}, not {MODEL_TYPE}")
+    models = []
+    for opt, lrs in (("adamw", FULL_GRID_LR_ADAMW), ("muon", FULL_GRID_LR_MUON)):
+        for bs in SWEEP_BATCH_SIZE:
+            for lr in lrs:
+                for wd in SWEEP_WD:
+                    models.append(_model(opt, _scaled_lr(opt, lr, bs), wd, bs))
+    return ArtifactSet(models)
+
+
+pt60m4_full_grid = build_full_grid()
+pt60m4_cpt_full_grid = _cpt_for(pt60m4_full_grid, "pt60m4-cpt-full-grid")
+
 pt60m4_cpt_lr_sweep = _cpt_for(pt60m4_lr_sweep, "pt60m4-cpt-lr-sweep")
 pt60m4_cpt_wd_sweep = _cpt_for(pt60m4_wd_sweep, "pt60m4-cpt-wd-sweep")
 pt60m4_cpt_bs_sweep = _cpt_for(pt60m4_bs_sweep, "pt60m4-cpt-bs-sweep")
@@ -405,6 +434,7 @@ pt60m4_cpt_all = pt60m4_cpt_wd_sweep + pt60m4_cpt_bs_sweep
 _dclm = dict(extra_val_chunks=dclm_heldout_val_chunks,
              extra_val_max_instances=DCLM_HELDOUT_INSTANCES)
 pt60m4_cpt_evals = build_cpt_model_evaluations(pt60m4_cpt_all, **_dclm)
+pt60m4_cpt_full_grid_evals = build_cpt_model_evaluations(pt60m4_cpt_full_grid, **_dclm)
 
 
 # ---------------------------------------------------------------------------

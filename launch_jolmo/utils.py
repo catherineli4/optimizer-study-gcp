@@ -38,7 +38,9 @@ def blob_exists(path: str) -> bool:
         return check_exists_remote(path, cache_depth=0)
     try:
         bucket_name, _, blob_name = path[len("gs://"):].partition("/")
-        exists = _get_storage_client().bucket(bucket_name).blob(blob_name).exists()
+        # timeout so one wedged connection can't stall a whole sweep's checks;
+        # on timeout the except below falls back to gsutil.
+        exists = _get_storage_client().bucket(bucket_name).blob(blob_name).exists(timeout=30)
         if exists:
             _exists_cache.add(path)
         return exists

@@ -15,6 +15,10 @@ from launch_jolmo.training import (
 
 DEFAULT_GAMMAS = [2e-2]
 
+# The gamma ladder actually swept for the multi-seed perturbation study
+# (multi-seed dirs exist on GCS for each of these).
+LADDER_GAMMAS = [0.002, 0.005, 0.007, 0.01, 0.02, 0.04, 0.08, 0.16]
+
 
 def build_perturbed_models(base_models: ArtifactSet, gammas=None) -> ArtifactSet:
     """One PerturbedModel per (base model × gamma) combination (all weights).

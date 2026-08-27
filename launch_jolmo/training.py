@@ -1,3 +1,4 @@
+import functools as ft
 import os
 import subprocess
 import tempfile
@@ -45,8 +46,14 @@ MODEL_ARCHS: Dict[str, _ModelConfig] = {
 # Module-level helpers for YAML config generation
 # ---------------------------------------------------------------------------
 
+@ft.lru_cache(maxsize=None)
 def _tokenizer_config(tokenizer_id: str) -> TokenizerConfig:
-    """Resolve a tokenizer identifier into a fully populated TokenizerConfig."""
+    """Resolve a tokenizer identifier into a fully populated TokenizerConfig.
+
+    Cached per identifier: ``from_hf`` hits the HF Hub, and compiling a large
+    sweep calls this once per artifact — uncached, thousands of unauthenticated
+    Hub requests get rate-limited into indefinite backoff.
+    """
     try:
         cfg = TokenizerConfig(identifier=tokenizer_id)
     except TypeError:
@@ -702,7 +709,11 @@ class JolmoModel(Artifact):
             "train_module": {
                 "_CLASS_": "olmo_core.train.train_module.transformer.config.TransformerTrainModuleConfig",
                 "rank_microbatch_size": self.rank_microbatch_size,
-                **({"eval_rank_microbatch_size": self.eval_rank_microbatch_size} if self.eval_rank_microbatch_size is not None else {}),
+                # eval_rank_microbatch_size is deliberately NOT emitted: this
+                # vendored TransformerTrainModuleConfig has no such field (it
+                # errors on unknown keys) and nothing in the in-training eval
+                # path reads it. The dataclass field still sizes standalone
+                # ModelEvaluation batches.
                 "max_sequence_length": self.sequence_length,
                 "optim": _build_optimizer_spec(
                     self.optimizer, self.learning_rate, self.betas, self.weight_decay,
@@ -1023,6 +1034,10 @@ class JolmoModel(Artifact):
                     directory=True,
                     contents=True,
                 )
+            # Free node-local staging once everything is uploaded — a large sweep
+            # otherwise fills the scratch disk with finished artifacts' staging.
+            # Only reached when the uploads above succeeded (script is set -e).
+            builder.run_command(f'rm -rf -- "{output_dir}"')
 
 
 # ---------------------------------------------------------------------------
@@ -1134,6 +1149,13 @@ class CPTModel(Artifact):
     cpt_dataset: str = "tulu"
     train_tokens: int = 100_000_000        # CPT budget in tokens
 
+    # DCLM replay: fraction of the CPT token budget drawn from pretraining data
+    # (via a two-source SourceMixtureDatasetConfig). 0.0 = plain finetuning, and
+    # the run name is unchanged so existing artifacts keep matching. > 0 needs
+    # replay_chunks (the DCLM file(s) to sample the replay tokens from).
+    replay_dclm: float = 0.0
+    replay_chunks: Tuple["Chunk", ...] = ()
+
     # CPT batch & context — decoupled from the pretrained model so CPT can run a
     # smaller batch/context than pretrain (defaults: 64K-token batch, 1024 ctx).
     sequence_length: int = 1024
@@ -1169,6 +1191,8 @@ class CPTModel(Artifact):
         if self.optimizer == "muon":
             muon_lr_str = f"{self.muon_lr:.1e}".replace("e-0", "e-")
             base = f"{base}-muonlr{muon_lr_str}"
+        if self.replay_dclm > 0:
+            base = f"{base}-replay{self.replay_dclm:g}"
         return base
 
     @property
@@ -1236,6 +1260,14 @@ class CPTModel(Artifact):
 
         all_chunks = list(train_chunks) + [c for _, c in validation_chunks]
         _download_chunk_dirs(builder, all_chunks, dataset_cache_dir)
+        if self.replay_dclm > 0:
+            if not self.replay_chunks:
+                raise ValueError(
+                    f"{self.run_name}: replay_dclm={self.replay_dclm} requires replay_chunks"
+                )
+            # Replay sources are single large files (a DCLM shard); download
+            # file-by-file into the shared cache so all tasks reuse one copy.
+            _download_chunk_files(builder, list(self.replay_chunks), dataset_cache_dir)
 
         train_paths = [_resolve_chunk_path(c, dataset_cache_dir) for c in train_chunks]
         val_datasets = {
@@ -1278,6 +1310,43 @@ class CPTModel(Artifact):
             train_chunks=(train_chunks[0],),  # placeholder, overridden below
         )
         yaml_config = pseudo._build_yaml_config(save_folder, train_paths, val_datasets, work_dir)
+
+        if self.replay_dclm > 0:
+            # Replace the plain-paths dataset with a two-source mixture:
+            # (1 - r) of the budget from the CPT dataset, r from DCLM replay.
+            # Same spec shape as the proven single-source epoch-cap path in
+            # _build_dataset_spec. The CPT source may be smaller than its share
+            # of the budget (gsm8k etc.), so allow generous repetition.
+            r = self.replay_dclm
+            replay_paths = [_resolve_chunk_path(c, dataset_cache_dir) for c in self.replay_chunks]
+            ds_spec = yaml_config["dataset"]
+            ds_spec.pop("paths", None)
+            ds_spec["source_mixture_config"] = {
+                "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureDatasetConfig",
+                "requested_tokens": effective_tokens,
+                "global_batch_size": self.global_batch_size,
+                "processes": max(1, self.num_processes),
+                "render_tables": False,
+                "source_list": {
+                    "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureList",
+                    "sources": [
+                        {
+                            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig",
+                            "source_name": self.cpt_dataset,
+                            "target_ratio": 1.0 - r,
+                            "max_repetition_ratio": 100.0,
+                            "paths": train_paths,
+                        },
+                        {
+                            "_CLASS_": "olmo_core.data.source_mixture.SourceMixtureConfig",
+                            "source_name": "dclm-replay",
+                            "target_ratio": r,
+                            "paths": replay_paths,
+                        },
+                    ],
+                },
+            }
+
         config_path = os.path.join(output_dir, "config.yaml")
         builder.create_yaml_file(config_path, yaml_config)
 
@@ -1549,6 +1618,9 @@ class ModelEvaluation(Artifact):
     # JSON so these results don't collide with the default eval.
     val_chunks_override: Tuple[Tuple[str, Chunk], ...] = ()
     eval_tag: str = ""
+    # Cap the number of sequence_length-token sequences scored per dataset for
+    # the model's own (or override) val sets. None = score the whole file.
+    val_max_instances: Optional[int] = 1024
     # Extra validation datasets scored IN ADDITION to the model's own (or the
     # override) val chunks, appended to the same eval JSON. Used to fold a
     # held-out DCLM shard into the existing pretrain eval pipeline without a
@@ -1636,7 +1708,15 @@ class ModelEvaluation(Artifact):
         _download_chunk_dirs(builder, [c for _, c in val_chunks], dataset_cache_dir)
 
         validation_datasets = [
-            {"name": label, "paths": [_resolve_chunk_path(chunk, dataset_cache_dir)]}
+            {
+                "name": label,
+                "paths": [_resolve_chunk_path(chunk, dataset_cache_dir)],
+                **(
+                    {"max_instances": self.val_max_instances}
+                    if self.val_max_instances is not None
+                    else {}
+                ),
+            }
             for label, chunk in val_chunks
         ]
 
@@ -1676,6 +1756,10 @@ class ModelEvaluation(Artifact):
 
         # Upload result JSON
         _upload_to_gs_with_retry(builder, output_json, remote_path(self.relpath), directory=False)
+        # Drop the downloaded model staging once the JSON is uploaded — a large
+        # eval sweep otherwise fills the scratch disk (~hundreds of MB x
+        # thousands of evals). Only reached on success (script is set -e).
+        builder.run_command(f'rm -rf -- "{checkpoint_local}"')
 
 
 def _perturbed_run_name(
@@ -1905,10 +1989,20 @@ class MultiSeedPerturbedEvaluation(Artifact):
         builder.ensure_directory(output_dir)
         builder.ensure_directory(dataset_cache_dir)
 
-        # Download all seed_*/ trees in one shot.
+        # Download only what the eval reads: each seed's unsharded model.pt and
+        # its config.json. The full seed tree also carries optim.pt (~2x the
+        # model) and a sharded final/ checkpoint (~4x) — ~85% wasted bytes.
         parent_gs = remote_path(msp.relpath)
         parent_local = os.path.join(data_dir, msp.relpath)
-        builder.download_from_gs(parent_gs, parent_local, directory=True)
+        for s in msp.seeds:
+            seed_rel = os.path.join(f"seed_{s:03d}", "final-unsharded")
+            builder.ensure_directory(os.path.join(parent_local, seed_rel))
+            for fname in ("model.pt", "config.json"):
+                builder.download_from_gs(
+                    os.path.join(parent_gs, seed_rel, fname),
+                    os.path.join(parent_local, seed_rel, fname),
+                    directory=False,
+                )
 
         extra = _coerce_val_chunk_pairs(self.extra_val_chunks)
         if not extra:
@@ -1957,6 +2051,10 @@ class MultiSeedPerturbedEvaluation(Artifact):
         )
 
         _upload_to_gs_with_retry(builder, output_json, remote_path(self.relpath), directory=False)
+        # The downloaded seed tree is 10+ unsharded checkpoints (~15-20 GB per
+        # task); drop it once the averaged JSON is uploaded (script is set -e,
+        # so this only runs on success).
+        builder.run_command(f'rm -rf -- "{parent_local}"')
 
 
 # ---------------------------------------------------------------------------
