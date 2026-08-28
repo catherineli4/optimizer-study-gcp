@@ -165,4 +165,51 @@ class FtSweep:
 # Append FtSweep(base=<some JolmoModel>) entries here.
 # ---------------------------------------------------------------------------
 
-SWEEPS: Tuple[FtSweep, ...] = ()
+import sys
+from dataclasses import replace as _dc_replace
+
+from launch_jolmo.lr_bs_sweep import SWEEPS as _LRBS_SWEEPS, DEFAULT_NAME_PREFIX as _PT_PREFIX
+from launch_jolmo.pretraining_matrix import _existing_jolmo_runs
+
+# --- PTSweep ↔ MuonExpt3 aliasing -------------------------------------------
+# A PTSweep cell at the reference batch and default weight decay
+#     PTSweep60M-0.06B-chinchilla-<c>-<opt>-<lr…>-wd0.1-bs1M-wsd
+# is the SAME training configuration as the older
+#     MuonExpt3-0.06B-chinchilla-<c>-<opt>-<lr…>-wsd
+# — one underlying model under two names. Where the MuonExpt3-named artifact
+# exists on GCS, finetune under THAT name, so its existing CPT artifacts keep
+# matching and the same model is never finetuned twice under both names.
+
+_PT_ALIAS_SUFFIX = "-wd0.1-bs1M-wsd"
+
+
+def _canonical_base(m: JolmoModel) -> JolmoModel:
+    name = m.model_name
+    if not (name.startswith(f"{_PT_PREFIX}-") and name.endswith(_PT_ALIAS_SUFFIX)):
+        return m
+    mid = name[len(_PT_PREFIX) + 1 : -len(_PT_ALIAS_SUFFIX)]
+    twin = f"MuonExpt3-{mid}-wsd"
+    if twin in _existing_jolmo_runs():
+        return _dc_replace(m, model_name=twin)
+    return m
+
+
+# One FtSweep per 60M pretrained base from the LR × batch-size sweeps, bases
+# canonicalized as above and deduplicated. Under a non-60M $OPTIM_SIZE the
+# lr_bs sweeps build 0 models, so this stays empty and no ft- stages are
+# registered. Gated on argv (same pattern as cpt-all in pretraining_matrix) so
+# only ft- commands pay for the GCS listing.
+_WANT_FT = any(a.startswith("ft-") for a in sys.argv)
+
+_ft_sweeps = []
+if _WANT_FT:
+    _seen = set()
+    for _lrbs_sweep in _LRBS_SWEEPS:
+        for _m in _lrbs_sweep.models():
+            _b = _canonical_base(_m)
+            if _b.run_name in _seen:
+                continue
+            _seen.add(_b.run_name)
+            _ft_sweeps.append(FtSweep(base=_b))
+
+SWEEPS: Tuple[FtSweep, ...] = tuple(_ft_sweeps)

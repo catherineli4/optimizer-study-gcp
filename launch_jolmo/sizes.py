@@ -39,7 +39,7 @@ PROFILES: Dict[str, Dict] = {
     "60M": {
         "project": "Optim-60M-tuning",
         "model_type": "0.06B",
-        "chinchillas": [1, 2, 4, 8],   # trimmed from [1..128] for the chin-1-8 CPT pass
+        "chinchillas": [0.25, 0.5, 1, 2, 4, 8],   # trimmed from [1..128] for the chin-1-8 CPT pass
         "num_processes": 8,
     },
     "100M": {
