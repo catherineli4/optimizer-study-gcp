@@ -52,7 +52,7 @@ _SIZE, _PROFILE = active_profile()
 # tree is wanted.
 DEFAULT_NAME_PREFIX = f"PTSweep{_SIZE}"
 
-SWEEP_LRS: Tuple[float, ...] = (5e-3, 7e-3, 1e-2, 1.4e-2, 2e-2, 2.8e-2, 4e-2, 5.6e-2)
+SWEEP_LRS: Tuple[float, ...] = (7e-3, 1e-2, 1.4e-2, 2e-2, 2.8e-2, 4e-2, 5.6e-2, 8e-2)
 SWEEP_BS_MULTIPLIERS: Tuple[int, ...] = (1, 2, 4)   # × GLOBAL_BATCH_SIZE
 
 
@@ -170,9 +170,12 @@ class LrBatchSweep:
             # Schedule
             "scheduler": self.scheduler,
             "global_batch_size": gbs,
-            # Derived from the batch size, so the batch axis stays within memory.
-            "rank_microbatch_size": max(SEQUENCE_LENGTH, gbs // gpus // 8),
-            "eval_rank_microbatch_size": max(SEQUENCE_LENGTH, gbs // gpus // 64),
+            # Derived from the batch size but CAPPED at 64K tokens: the LM-head
+            # logits scale with microbatch tokens (262K tokens -> ~49 GiB in
+            # bf16, OOM on 80GB) — the cap trades gradient-accumulation steps
+            # for memory and keeps the global batch (and the math) identical.
+            "rank_microbatch_size": max(SEQUENCE_LENGTH, min(gbs // gpus // 8, 65_536)),
+            "eval_rank_microbatch_size": max(SEQUENCE_LENGTH, min(gbs // gpus // 64, 65_536)),
             "validation_eval_interval": self.validation_eval_interval,
             # Parallelism & compilation
             "compile_model": True,
@@ -279,7 +282,7 @@ class LrBatchSweep:
 #   <label> (models) and <label>-evals.
 # ---------------------------------------------------------------------------
 
-LRBS_60M_CHINCHILLAS: Tuple[float, ...] = (1, 2, 4, 8)
+LRBS_60M_CHINCHILLAS: Tuple[float, ...] = (0.25, 0.5, 1, 2, 4, 8)
 
 # The chinchilla-0.25 sweep already on GCS was trained with this grid (one step
 # above SWEEP_LRS) and its muon component pinned to adamw 5.6e-2 — both must

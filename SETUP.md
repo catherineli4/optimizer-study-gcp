@@ -77,7 +77,7 @@ If the drylaunch prints artifact listings and "already exist" skips, everything
 ## 5. Running
 
 ```bash
-OPTIM_SIZE=<60M|100M|300M|600M> python -m launch_jolmo.launcher runlocal <stage...>
+OPTIM_SIZE=<30M|60M|100M|300M|600M> python -m launch_jolmo.launcher runlocal <stage...>
 ```
 
 - `runlocal` schedules across all local GPUs; `drylaunch` previews.
