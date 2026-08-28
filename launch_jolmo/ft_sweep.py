@@ -7,8 +7,8 @@ pretrained `JolmoModel` and builds every combination of
 
 as `CPTModel` artifacts, plus matching `ModelEvaluation`s.
 
-Defaults: 6 datasets × (8 adamw LRs + 8 muon LRs) × 4 replay fractions
-        = **384 finetunes** per base.
+Defaults: 6 datasets × (8 adamw LRs + 8 muon LRs) × 1 replay fraction (r=0)
+        = **96 finetunes** per base.
 
 Semantics:
   - FT LRs come from the live `cpt.CPT_LR_SWEEP` ("adamw" as-is; "muon" via
@@ -50,7 +50,10 @@ from launch_jolmo.pretraining_matrix import (
 FT_DATASETS: Tuple[str, ...] = (
     "tulu", "starcoder", "musicpile", "alpaca", "gsm8k", "stackmathqa",
 )
-FT_REPLAY_FRACTIONS: Tuple[float, ...] = (0.0, 0.1, 0.2, 0.3)
+# Replay axis removed from the default sweep: plain finetuning only (r=0, no
+# name suffix). The replay machinery (CPTModel.replay_dclm + REPLAY_DCLM_CHUNK)
+# stays available — pass replay_fractions=(0.0, 0.1, ...) per FtSweep to re-arm.
+FT_REPLAY_FRACTIONS: Tuple[float, ...] = (0.0,)
 
 # Fixed DCLM replay source: one full shard (~16 GiB, ~4.3B tokens), cached once
 # per node. Deliberately UNSEEN data: pretraining consumes parts from the front
