@@ -162,9 +162,54 @@ def _tokens_for(chinchilla: float) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 PT_LR_BY_MODEL: Dict[str, Dict] = {
+    "0.03B": {
+        # 30M study (OPTIM_SIZE=30M). After
+        #     OPTIM_SIZE=30M python -m launch_jolmo.launcher launch pretrain-adamw-wsd
+        #     OPTIM_SIZE=30M python -m launch_jolmo.launcher launch eval-pretrain-adamw
+        # read the val loss per LR (new_utils/plot_pt_sweep.py, or
+        # `python -m new_utils.lr_sweep_dclm plot`) and replace the value in each
+        # cell with the LR that won it. Cells fall back individually to
+        # PT_LR_SWEEP when None, so a half-filled table is fine — tuned
+        # chinchillas pin, the rest keep sweeping.
+        #
+        # Width prior: this arch is half the width of 0.06B (d_model 128 vs 256),
+        # and optimal LR broadly scales inversely with width, so winners were
+        # expected at roughly 2x the 0.06B row — the adamw cells below (2e-2 ..
+        # 4e-2) are consistent with that.
+        "wsd": {
+            "adamw": {
+                1: 2.8e-2,
+                2: 4.0e-2,
+                4: 2.0e-2,
+                8: 2.0e-2,
+                16: 2.0e-2,
+            },
+            "muon": {
+                # (muon_lr, adamw_component_lr) measured from the completed muon
+                # sweep — mean val CE over the four diversity-v2 sets, with the
+                # adamw component pinned to the tuned adamw LR above:
+                #   c1 : 1.0e-2 -> 4.8592  (1.4e-2 4.8668, 2.8e-2 4.8905, 4e-2 4.8984, 2e-2 4.9197, 5.6e-2 5.0853)
+                #   c2 : 1.4e-2 -> 4.7245  (1e-2 4.7247, 2e-2 4.7322, 2.8e-2 4.7473, 4e-2 4.7712, 5.6e-2 4.7930)
+                #   c4 : 1.4e-2 -> 4.5875  (2e-2 4.5929, 1e-2 4.5934, 2.8e-2 4.5991, 4e-2 4.6113, 5.6e-2 4.6226)
+                #   c8 : 1.0e-2 -> 4.5396  (1.4e-2 4.5400, 2e-2 4.5459, 2.8e-2 4.5518, 4e-2 4.5639, 5.6e-2 4.5764)
+                #   c16: 1.4e-2 -> 4.4971  (1e-2 4.4991, 2e-2 4.5019, 2.8e-2 4.5092, 4e-2 4.5355, 5.6e-2 4.5420)
+                # Caveats: every winner is at or one step above the BOTTOM of the
+                # swept range (1e-2), so the true optimum likely sits below it;
+                # and the top-two gaps are <= 0.008 CE, so the picks are soft.
+                # Extend the grid downward before treating these as final.
+                1: (1.0e-2, 2.8e-2),
+                2: (1.4e-2, 4.0e-2),
+                4: (1.4e-2, 2.0e-2),
+                8: (1.0e-2, 2.0e-2),
+                16: (1.4e-2, 2.0e-2),
+            },
+        },
+    },
     "0.06B": {
         "wsd": {
             "adamw": {
+                0.25: 5.6e-2,
+                0.5: 5.6e-2,
                 1: 1.4e-2,
                 2: 1e-2,
                 4: 7e-3,

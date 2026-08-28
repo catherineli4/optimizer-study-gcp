@@ -48,7 +48,7 @@ TMPDIR=/mnt/localssd/tmp pip install --cache-dir /mnt/localssd/tmp/pip-cache \
     wandb google-cloud-storage cached-path transformers omegaconf py-spy
 
 # --- Per-size project configs ----------------------------------------------
-for entry in "Optim-60M-tuning" "Optim-100M-tuning" "Optim-300M-tuning" "Optim-600M-tuning"; do
+for entry in "Optim-30M-tuning" "Optim-60M-tuning" "Optim-100M-tuning" "Optim-300M-tuning" "Optim-600M-tuning"; do
     d="$HOME/.experiments/projects/$entry"
     mkdir -p "$d"
     cat > "$d/project.json" <<EOF

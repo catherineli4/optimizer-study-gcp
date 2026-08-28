@@ -52,7 +52,7 @@ _SIZE, _PROFILE = active_profile()
 # tree is wanted.
 DEFAULT_NAME_PREFIX = f"PTSweep{_SIZE}"
 
-SWEEP_LRS: Tuple[float, ...] = (5e-3, 7e-3, 1e-2, 1.4e-2, 2e-2, 2.8e-2, 4e-2, 5.6e-2)
+SWEEP_LRS: Tuple[float, ...] = (7e-3, 1e-2, 1.4e-2, 2e-2, 2.8e-2, 4e-2, 5.6e-2, 8e-2)
 SWEEP_BS_MULTIPLIERS: Tuple[int, ...] = (1, 2, 4)   # × GLOBAL_BATCH_SIZE
 
 
@@ -277,7 +277,7 @@ class LrBatchSweep:
 #   <label> (models) and <label>-evals.
 # ---------------------------------------------------------------------------
 
-LRBS_60M_CHINCHILLAS: Tuple[float, ...] = (1, 2, 4, 8)
+LRBS_60M_CHINCHILLAS: Tuple[float, ...] = (0.25, 0.5, 1, 2, 4, 8)
 
 SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
     LrBatchSweep(model_type="0.06B", optimizer=opt, chinchilla=c)

@@ -28,6 +28,14 @@ from typing import Dict, List, Tuple
 
 
 PROFILES: Dict[str, Dict] = {
+    "30M": {
+        # 0.03B study. Tuned PT LRs live in PT_LR_BY_MODEL["0.03B"] (adamw +
+        # muon, chinchillas 1-16, measured from the completed sweeps).
+        "project": "Optim-30M-tuning",
+        "model_type": "0.03B",
+        "chinchillas": [1, 2, 4, 8, 16],
+        "num_processes": 2,
+    },
     "60M": {
         "project": "Optim-60M-tuning",
         "model_type": "0.06B",
@@ -47,7 +55,7 @@ PROFILES: Dict[str, Dict] = {
         # PT_LR_SWEEP until a table is filled in under PT_LR_BY_MODEL["0.3B"].
         "project": "Optim-300M-tuning",
         "model_type": "0.3B",
-        "chinchillas": [1,2,4, 8],
+        "chinchillas": [0.25, 0.5, 1,2,4, 8],
         "num_processes": 8,
     },
     "600M": {
