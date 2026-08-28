@@ -221,6 +221,16 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
             },
             "muon": {
                 # (muon_lr, adamw_component_lr)
+                # 0.25/0.5 measured from the lrbs fractional sweeps (mean val CE
+                # over Books/C4/Reddit/Wiki at the 1M reference batch, adamw
+                # component pinned to the tuned 5.6e-2):
+                #   c0.25: 1.4e-2 -> 4.6849  (2e-2 4.7067, 1e-2 4.7144, 7e-3 4.7188)
+                #   c0.5 : 1.0e-2 -> 4.3667  (1.4e-2 4.3700 — gap only 0.003, soft pick; 7e-3 4.3780)
+                # AdamW winners at the same batch: c0.25 5.6e-2 (5.4728, next
+                # 4e-2 5.5559); c0.5 5.6e-2 (4.7421, next 2.8e-2 4.8259) —
+                # both interior (8e-2 was swept and worse).
+                0.25: (1.4e-2,5.6e-2),
+                0.5: (1e-2,5.6e-2),
                 1: (1.4e-2,1.4e-2),
                 2: (1.4e-2,1e-2),
                 4: (1e-2,7e-3),
