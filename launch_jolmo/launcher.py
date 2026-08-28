@@ -226,13 +226,17 @@ executor.stage_group("ft-lrbs-60m-evals", tuple(f"{_s.label}-evals" for _s in FT
 # identity-based dependency check resolves; MuonExpt3-aliased bases exist on
 # GCS and are never retrained). Deliberately NOT in any umbrella group.
 executor.stage("ft-lrbs-bases", [_s.base for _s in FT_SWEEPS])
-# Just the chinchilla-0.25 bases (the historical 48-model sweep).
-executor.stage_group(
-    "ft-lrbs-60m-c0.25",
-    tuple(_s.label for _s in FT_SWEEPS if "-chinchilla-0.25-" in _s.base.run_name))
-executor.stage_group(
-    "ft-lrbs-60m-c0.25-evals",
-    tuple(f"{_s.label}-evals" for _s in FT_SWEEPS if "-chinchilla-0.25-" in _s.base.run_name))
+# Per-chinchilla umbrella groups: ft-lrbs-60m-c<chin> (+ -evals) for every
+# chinchilla in the lr_bs sweep (0.25, 0.5, 1, 2, 4, 8). The trailing dash in
+# the match keeps c1 from also matching c16-style names.
+from launch_jolmo.lr_bs_sweep import LRBS_60M_CHINCHILLAS as _FT_CHINS
+for _c in _FT_CHINS:
+    _tag = f"{_c:g}"
+    _labels = tuple(
+        _s.label for _s in FT_SWEEPS if f"-chinchilla-{_tag}-" in _s.base.run_name)
+    executor.stage_group(f"ft-lrbs-60m-c{_tag}", _labels)
+    executor.stage_group(
+        f"ft-lrbs-60m-c{_tag}-evals", tuple(f"{_l}-evals" for _l in _labels))
 # Muon alpha sweep: CPT muon models across alpha = muon→adamw LR ratio.
 executor.stage("muon-sweep",           muon_sweep_models)
 
