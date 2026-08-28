@@ -66,6 +66,36 @@ REPLAY_DCLM_CHUNK = Chunk(
     ),
 )
 
+# --- Existence-check bypass --------------------------------------------------
+# The ft-lrbs sweeps enumerate ~100K artifacts (hundreds of bases x 384
+# finetunes + as many evals); the per-artifact GCS pre-flight is pure overhead
+# on a fresh sweep. FtSweep artifacts therefore skip the existence stage
+# ENTIRELY by default: should_skip() returns False with zero network calls, so
+# every enumerated cell is scheduled unconditionally.
+#
+# CAUTION: this also means an interrupted ft- sweep does NOT resume — a relaunch
+# re-trains finished cells. Export OPTIM_FT_EXISTS_CHECK=1 to restore the normal
+# skip-what-exists behavior (do that for any rerun/resume of a partial sweep).
+import os as _os
+
+_FT_EXISTS_CHECK = _os.environ.get("OPTIM_FT_EXISTS_CHECK", "0") == "1"
+
+
+class _NoExistsCheck:
+    def should_skip(self) -> bool:  # overrides Artifact.should_skip
+        if _FT_EXISTS_CHECK:
+            return super().should_skip()
+        return False
+
+
+class FtCPTModel(_NoExistsCheck, CPTModel):
+    """CPTModel whose existence pre-flight is bypassed (see above)."""
+
+
+class FtModelEvaluation(_NoExistsCheck, ModelEvaluation):
+    """ModelEvaluation whose existence pre-flight is bypassed (see above)."""
+
+
 # models() memoised per parameter key — load-bearing, same as LrBatchSweep:
 # evals() depend on their base CPTModels by object identity.
 _MODELS_CACHE: Dict[tuple, ArtifactSet] = {}
@@ -122,7 +152,7 @@ class FtSweep:
                     else:
                         muon_lr, adamw_lr = None, lr_entry
                     for r in self.replay_fractions:
-                        m = CPTModel(
+                        m = FtCPTModel(
                             pretrained_model=self.base,
                             cpt_dataset=ds,
                             train_tokens=self.train_tokens,
@@ -150,7 +180,7 @@ class FtSweep:
     def evals(self) -> ArtifactSet:
         """One ModelEvaluation per finetune (CPT val sets + held-out DCLM)."""
         return ArtifactSet([
-            ModelEvaluation(
+            FtModelEvaluation(
                 model=m,
                 extra_val_chunks=dclm_heldout_val_chunks,
                 extra_val_max_instances=DCLM_HELDOUT_INSTANCES,
