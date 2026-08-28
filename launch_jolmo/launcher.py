@@ -219,6 +219,20 @@ from launch_jolmo.ft_sweep import SWEEPS as FT_SWEEPS
 for _sweep in FT_SWEEPS:
     executor.stage(_sweep.label, _sweep.models())
     executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+# Umbrella groups: every ft- sweep (one per 60M lr_bs pretrained base) at once.
+executor.stage_group("ft-lrbs-60m",       tuple(_s.label for _s in FT_SWEEPS))
+executor.stage_group("ft-lrbs-60m-evals", tuple(f"{_s.label}-evals" for _s in FT_SWEEPS))
+# The FT base models (registered, like cpt-all-bases, so the executor's
+# identity-based dependency check resolves; MuonExpt3-aliased bases exist on
+# GCS and are never retrained). Deliberately NOT in any umbrella group.
+executor.stage("ft-lrbs-bases", [_s.base for _s in FT_SWEEPS])
+# Just the chinchilla-0.25 bases (the historical 48-model sweep).
+executor.stage_group(
+    "ft-lrbs-60m-c0.25",
+    tuple(_s.label for _s in FT_SWEEPS if "-chinchilla-0.25-" in _s.base.run_name))
+executor.stage_group(
+    "ft-lrbs-60m-c0.25-evals",
+    tuple(f"{_s.label}-evals" for _s in FT_SWEEPS if "-chinchilla-0.25-" in _s.base.run_name))
 # Muon alpha sweep: CPT muon models across alpha = muon→adamw LR ratio.
 executor.stage("muon-sweep",           muon_sweep_models)
 

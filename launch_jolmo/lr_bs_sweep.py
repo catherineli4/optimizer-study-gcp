@@ -99,6 +99,9 @@ class LrBatchSweep:
     scale_adamw_component: bool = True
     validation_eval_interval: int = 95
     name_prefix: Optional[str] = None            # default: DEFAULT_NAME_PREFIX
+    # Explicit muon adamw-component pin for chinchillas that have no
+    # PT_LR_BY_MODEL entry (e.g. the historical 0.25 sweep). Overrides the table.
+    pinned_adamw_lr: Optional[float] = None
 
     def __post_init__(self):
         if self.optimizer not in ("adamw", "muon"):
@@ -132,6 +135,8 @@ class LrBatchSweep:
     @property
     def tuned_adamw_lr(self) -> Optional[float]:
         """The tuned adamw LR the muon sweep pins its component to (None if absent)."""
+        if self.pinned_adamw_lr is not None:
+            return self.pinned_adamw_lr
         cell = (
             PT_LR_BY_MODEL.get(self.model_type, {})
             .get(self.scheduler, {})
@@ -276,7 +281,19 @@ class LrBatchSweep:
 
 LRBS_60M_CHINCHILLAS: Tuple[float, ...] = (1, 2, 4, 8)
 
+# The chinchilla-0.25 sweep already on GCS was trained with this grid (one step
+# above SWEEP_LRS) and its muon component pinned to adamw 5.6e-2 — both must
+# stay byte-identical to keep matching the existing 48 PTSweep60M-...-0.25-*
+# artifact names.
+LRBS_60M_C025_LRS: Tuple[float, ...] = (7e-3, 1e-2, 1.4e-2, 2e-2, 2.8e-2, 4e-2, 5.6e-2, 8e-2)
+LRBS_60M_C025_ADAMW_PIN: float = 5.6e-2
+
+# c0.25 first: downstream consumers (ft_sweep) preserve this order.
 SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
+    LrBatchSweep(model_type="0.06B", optimizer=opt, chinchilla=0.25,
+                 lrs=LRBS_60M_C025_LRS, pinned_adamw_lr=LRBS_60M_C025_ADAMW_PIN)
+    for opt in ("adamw", "muon")
+) + tuple(
     LrBatchSweep(model_type="0.06B", optimizer=opt, chinchilla=c)
     for c in LRBS_60M_CHINCHILLAS
     for opt in ("adamw", "muon")

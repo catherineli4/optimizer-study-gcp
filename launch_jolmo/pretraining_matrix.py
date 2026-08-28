@@ -165,6 +165,8 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
     "0.06B": {
         "wsd": {
             "adamw": {
+                0.25: 5.6e-2,
+                0.5: 5.6e-2,
                 1: 1.4e-2,
                 2: 1e-2,
                 4: 7e-3,
@@ -176,6 +178,8 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
             },
             "muon": {
                 # (muon_lr, adamw_component_lr)
+                0.25: (1.4e-2,5.6e-2),
+                0.5: (1e-2,5.6e-2),
                 1: (1.4e-2,1.4e-2),
                 2: (1.4e-2,1e-2),
                 4: (1e-2,7e-3),
