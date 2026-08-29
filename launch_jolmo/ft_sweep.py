@@ -7,8 +7,8 @@ pretrained `JolmoModel` and builds every combination of
 
 as `CPTModel` artifacts, plus matching `ModelEvaluation`s.
 
-Defaults: 6 datasets × (8 adamw LRs + 8 muon LRs) × 1 replay fraction (r=0)
-        = **96 finetunes** per base.
+Defaults (r=0 only): adamw-pretrained base -> 6 datasets × 8 adamw LRs = 48;
+        muon-pretrained base -> 6 × (8 muon + 8 adamw LRs) = **96 finetunes**.
 
 Semantics:
   - FT LRs come from the live `cpt.CPT_LR_SWEEP` ("adamw" as-is; "muon" via
@@ -145,10 +145,17 @@ class FtSweep:
         if cached is not None:
             return cached
 
+        # Optimizer pairing follows the main `cpt` convention: adamw-pretrained
+        # bases finetune with adamw ONLY; muon-pretrained bases finetune with
+        # both muon and adamw (whatever subset of self.optimizers applies).
+        opts = self.optimizers
+        if getattr(self.base, "optimizer", "adamw") == "adamw":
+            opts = tuple(o for o in opts if o == "adamw")
+
         models = []
         seen = set()
         for ds in self.datasets:
-            for opt in self.optimizers:
+            for opt in opts:
                 for lr_entry in self._lr_entries(opt):
                     if opt == "muon":
                         muon_lr, adamw_lr = lr_entry
