@@ -210,9 +210,17 @@ executor.stage("eval-cpt-all-lrs",     cpt_all_lrs_evals)
 
 # LR x batch-size cross-product sweeps (launch_jolmo/lr_bs_sweep.py)
 from launch_jolmo.lr_bs_sweep import SWEEPS as LRBS_SWEEPS
+from launch_jolmo.lr_bs_sweep import HI5_SWEEPS as LRBS_HI5_SWEEPS
 for _sweep in LRBS_SWEEPS:
     executor.stage(_sweep.label, _sweep.models())
     executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+# Above-optimal bs1M subsets (lrbs-...-hi5): 5 next LRs above each tuned optimal.
+for _sweep in LRBS_HI5_SWEEPS:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+executor.stage_group("lrbs-hi5-60m", tuple(_s.label for _s in LRBS_HI5_SWEEPS))
+executor.stage_group("lrbs-hi5-60m-evals",
+                     tuple(f"{_s.label}-evals" for _s in LRBS_HI5_SWEEPS))
 
 # Finetuning cross-product sweeps (launch_jolmo/ft_sweep.py)
 from launch_jolmo.ft_sweep import SWEEPS as FT_SWEEPS

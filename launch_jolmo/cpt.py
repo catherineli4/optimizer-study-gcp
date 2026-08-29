@@ -14,7 +14,7 @@ CPT_DATASETS: List[str] = [
     "tulu", 
     "starcoder",
     "musicpile",
-    "alpaca",
+    # "alpaca",
     "gsm8k",
     # "siqa",
     # "open-platypus",

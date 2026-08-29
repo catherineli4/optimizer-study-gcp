@@ -52,7 +52,7 @@ _SIZE, _PROFILE = active_profile()
 # tree is wanted.
 DEFAULT_NAME_PREFIX = f"PTSweep{_SIZE}"
 
-SWEEP_LRS: Tuple[float, ...] = (7e-3, 1e-2, 1.4e-2, 2e-2, 2.8e-2, 4e-2, 5.6e-2, 8e-2)
+SWEEP_LRS: Tuple[float, ...] = (7e-3, 1e-2, 1.4e-2, 2e-2, 2.8e-2, 4e-2, 5.6e-2, 8e-2, 1.2e-1)
 SWEEP_BS_MULTIPLIERS: Tuple[int, ...] = (1, 2, 4)   # × GLOBAL_BATCH_SIZE
 
 
@@ -102,6 +102,9 @@ class LrBatchSweep:
     # Explicit muon adamw-component pin for chinchillas that have no
     # PT_LR_BY_MODEL entry (e.g. the historical 0.25 sweep). Overrides the table.
     pinned_adamw_lr: Optional[float] = None
+    # Distinguishes subset stages (e.g. "-hi5") from the full grid's stage name.
+    # Cell RUN NAMES are unaffected — overlapping cells still dedupe on GCS.
+    label_suffix: str = ""
 
     def __post_init__(self):
         if self.optimizer not in ("adamw", "muon"):
@@ -113,7 +116,8 @@ class LrBatchSweep:
 
     @property
     def label(self) -> str:
-        return f"lrbs-{self.model_type}-c{_chin_tag(self.chinchilla)}-{self.optimizer}"
+        return (f"lrbs-{self.model_type}-c{_chin_tag(self.chinchilla)}"
+                f"-{self.optimizer}{self.label_suffix}")
 
     @property
     def size_ok(self) -> bool:
@@ -300,4 +304,65 @@ SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
     LrBatchSweep(model_type="0.06B", optimizer=opt, chinchilla=c)
     for c in LRBS_60M_CHINCHILLAS
     for opt in ("adamw", "muon")
+)
+
+
+# ---------------------------------------------------------------------------
+# Above-optimal subset: bs multiplier 1 ONLY, and only the K next-highest LRs
+# above the tuned optimal for that (size, optimizer, chinchilla). If fewer than
+# K of SWEEP_LRS sit above the optimal, takes all that do. Stage label gets a
+# "-hi<K>" suffix; cell run names are the standard ones, so cells that the full
+# grid already trained resolve to the SAME artifacts and are skipped.
+# ---------------------------------------------------------------------------
+
+def _tuned_main_lr(model_type: str, scheduler: str, optimizer: str, chinchilla: float):
+    """The tuned MAIN lr for the cell: adamw -> learning_rate, muon -> muon_lr."""
+    cell = (
+        PT_LR_BY_MODEL.get(model_type, {})
+        .get(scheduler, {})
+        .get(optimizer, {})
+        .get(chinchilla)
+    )
+    if optimizer == "adamw":
+        return cell if isinstance(cell, (int, float)) else None
+    return cell[0] if isinstance(cell, tuple) else None
+
+
+def above_optimal_sweep(
+    model_type: str,
+    optimizer: str,
+    chinchilla: float,
+    k: int = 5,
+    lr_pool: Tuple[float, ...] = SWEEP_LRS,
+    **kwargs,
+) -> Optional[LrBatchSweep]:
+    """LrBatchSweep over the K next LRs above the tuned optimal, at bs x1 only.
+
+    Returns None (with a message) when the cell has no tuned optimal or no pool
+    LR sits above it — it never invents a starting point.
+    """
+    label = f"lrbs-{model_type}-c{_chin_tag(chinchilla)}-{optimizer}-hi{k}"
+    opt_lr = _tuned_main_lr(model_type, kwargs.get("scheduler", "wsd"), optimizer, chinchilla)
+    if opt_lr is None:
+        print(f"[{label}] 0 models — no tuned {optimizer} LR at chinchilla {chinchilla:g}")
+        return None
+    higher = tuple(sorted(lr for lr in lr_pool if lr > opt_lr)[:k])
+    if not higher:
+        print(f"[{label}] 0 models — no pool LR above the tuned optimal {opt_lr:g}")
+        return None
+    return LrBatchSweep(
+        model_type=model_type, optimizer=optimizer, chinchilla=chinchilla,
+        lrs=higher, bs_multipliers=(1,), label_suffix=f"-hi{k}", **kwargs,
+    )
+
+
+# Declared: one above-optimal subset per 60M (chinchilla x optimizer) with a
+# tuned cell. Stages: lrbs-0.06B-c<chin>-<opt>-hi5 (+ -evals via the launcher).
+HI5_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
+    s for s in (
+        above_optimal_sweep("0.06B", opt, c)
+        for c in dict.fromkeys(LRBS_60M_CHINCHILLAS)   # order-preserving dedupe
+        for opt in ("adamw", "muon")
+    )
+    if s is not None
 )
