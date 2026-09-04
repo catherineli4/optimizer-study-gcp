@@ -178,11 +178,14 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
         # 4e-2) are consistent with that.
         "wsd": {
             "adamw": {
-                1: 2.8e-2,
-                2: 4.0e-2,
+                0.25: 1.6e-1,
+                0.5: 1.2e-1,
+                1: 5.6e-2,
+                2: 5.6e-2,
                 4: 2.0e-2,
                 8: 2.0e-2,
                 16: 2.0e-2,
+                32: 1.4e-2,
             },
             "muon": {
                 # (muon_lr, adamw_component_lr) measured from the completed muon
@@ -197,11 +200,12 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
                 # swept range (1e-2), so the true optimum likely sits below it;
                 # and the top-two gaps are <= 0.008 CE, so the picks are soft.
                 # Extend the grid downward before treating these as final.
-                1: (1.0e-2, 2.8e-2),
-                2: (1.4e-2, 4.0e-2),
+                1: (1.0e-2, 5.6e-2),
+                2: (2e-2, 5.6e-2),
                 4: (1.4e-2, 2.0e-2),
                 8: (1.0e-2, 2.0e-2),
                 16: (1.4e-2, 2.0e-2),
+                32: (1.0e-2, 1.4e-2)
             },
         },
     },
@@ -210,25 +214,26 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
             "adamw": {
                 0.25: 5.6e-2,
                 0.5: 5.6e-2,
-                1: 1.4e-2,
+                1: 2e-2,
                 2: 1e-2,
-                4: 7e-3,
-                8: 1e-2,
-                16: 7e-3,
-                32: 7e-3,
-                64: 1e-2,
+                4: 1e-2,
+                8: 1.4e-2,
+                16: 1e-2,
+                32: 1e-2,
+                64: 7e-3,
                 128: 1e-2
+              
             },
             "muon": {
                 # (muon_lr, adamw_component_lr)
                 0.25: (1.4e-2,5.6e-2),
                 0.5: (1e-2,5.6e-2),
-                1: (1.4e-2,1.4e-2),
-                2: (1.4e-2,1e-2),
-                4: (1e-2,7e-3),
-                8: (7e-3,1e-2),
-                16: (5e-3,7e-3),
-                32: (5e-3,7e-3),
+                1: (1.4e-2,2e-2),
+                2: (1e-2,1e-2),
+                4: (1.4e-2,1e-2),
+                8: (1e-2,1.4e-2),
+                16: (1.4e-2,1e-2),
+                32: (7e-3,1e-2),
                 64: (5e-3,1e-2),
                 128: (5e-3, 1e-2),
 
@@ -256,6 +261,8 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
         # Tied-optimal cells used the first pick.
         "wsd": {
             "adamw": {
+                0.25: 4e-2,
+                0.5: 2e-2,
                 1: 1.4e-2,
                 2: 1e-2,
                 4: 1e-2,
@@ -267,7 +274,7 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
                 # (muon_lr, adamw_component_lr)
                 1: (1e-2, 1.4e-2),
                 2: (1e-2, 1e-2),
-                4: (7e-3, 1e-2),
+                4: (1e-2, 1e-2),
                 8: (1e-2, 7e-3),
                 16: (1e-2, 7e-3),
                 32: (5e-3, 7e-3),
@@ -303,11 +310,13 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
                 0.25: 2.5e-3,
                 0.5: 2.5e-3,
                 1: 2.5e-3,
+                2: 2.5e-3,
             },
             "muon": {
                 0.25: (1.4e-2, 2.5e-3),   # (muon_lr, adamw_component_lr)
                 0.5: (1.4e-2, 2.5e-3),
                 1: (1.4e-2, 2.5e-3),
+                2: (1.4e-2, 2.5e-3),
             },
         },
     },
@@ -475,6 +484,45 @@ def _lr_tag(lr: float) -> str:
     return f"{lr:.1e}".replace("e-0", "e-")
 
 
+_jolmo_runs_cache: Optional[set] = None
+
+
+def _existing_jolmo_runs() -> set:
+    """Run names of every JolmoModel dir on GCS (one cached listing)."""
+    global _jolmo_runs_cache
+    if _jolmo_runs_cache is None:
+        base = remote_path("JolmoModel").rstrip("/") + "/"
+        out = subprocess.run(["gsutil", "ls", base], capture_output=True, text=True)
+        _jolmo_runs_cache = {
+            line.strip().rstrip("/").rsplit("/", 1)[-1]
+            for line in out.stdout.splitlines() if line.strip()
+        }
+        print(f"[cpt-all] discovered {len(_jolmo_runs_cache)} pretrained run(s) on GCS")
+    return _jolmo_runs_cache
+
+
+def _pt_run_name(chinchilla, opt: str, tag: str, scheduler: str) -> str:
+    """Canonical run name for a pretrained (chinchilla, opt, LR-tag) cell.
+
+    The same trained model can exist under two naming schemas:
+    ``MuonExpt3-…-<sched>`` (this matrix) and the LR×BS sweep's
+    reference-batch cell ``PTSweep<size>-…-wd0.1-bs1M-wsd`` — an identical
+    training configuration. Resolve to whichever name already exists on GCS
+    (MuonExpt3 preferred); a cell trained nowhere keeps the MuonExpt3 name.
+    """
+    legacy = f"MuonExpt3-{MODEL_TYPE}-chinchilla-{chinchilla}-{opt}-{tag}-{scheduler}"
+    if scheduler != "wsd":
+        return legacy
+    runs = _existing_jolmo_runs()
+    if legacy in runs:
+        return legacy
+    twin = (f"PTSweep{_SIZE}-{MODEL_TYPE}-chinchilla-{chinchilla:g}"
+            f"-{opt}-{tag}-wd0.1-bs1M-wsd")
+    if twin in runs:
+        return twin
+    return legacy
+
+
 def _make_models(optimizers: List[str], scheduler: str = SCHEDULER) -> ArtifactSet:
     """Build one JolmoModel per (chinchilla × optimizer × LR) combo for the given scheduler.
 
@@ -495,7 +543,7 @@ def _make_models(optimizers: List[str], scheduler: str = SCHEDULER) -> ArtifactS
                 for lr in lrs:
                     tag = f"lr{_lr_tag(lr)}"
                     models.append(JolmoModel(
-                        model_name=f"MuonExpt3-{MODEL_TYPE}-chinchilla-{chinchilla}-adamw-{tag}-{scheduler}",
+                        model_name=_pt_run_name(chinchilla, "adamw", tag, scheduler),
                         **{**SHARED_MODEL_PARAMS, **schedule, "scheduler": scheduler, "train_chunks": train_chunks},
                         optimizer="adamw",
                         learning_rate=lr,
@@ -506,7 +554,7 @@ def _make_models(optimizers: List[str], scheduler: str = SCHEDULER) -> ArtifactS
                 for muon_lr, adamw_lr in pairs:
                     tag = f"muonlr{_lr_tag(muon_lr)}-adamwlr{_lr_tag(adamw_lr)}"
                     models.append(JolmoModel(
-                        model_name=f"MuonExpt3-{MODEL_TYPE}-chinchilla-{chinchilla}-muon-{tag}-{scheduler}",
+                        model_name=_pt_run_name(chinchilla, "muon", tag, scheduler),
                         **{**SHARED_MODEL_PARAMS, **schedule, "scheduler": scheduler, "train_chunks": train_chunks},
                         optimizer="muon",
                         muon_lr=muon_lr,
@@ -528,7 +576,7 @@ def _make_all_lr_models(optimizers: List[str], scheduler: str = SCHEDULER) -> Ar
                 for lr in PT_LR_SWEEP.get("adamw", []):
                     tag = f"lr{_lr_tag(lr)}"
                     models.append(JolmoModel(
-                        model_name=f"MuonExpt3-{MODEL_TYPE}-chinchilla-{chinchilla}-adamw-{tag}-{scheduler}",
+                        model_name=_pt_run_name(chinchilla, "adamw", tag, scheduler),
                         **{**SHARED_MODEL_PARAMS, **schedule, "scheduler": scheduler, "train_chunks": train_chunks},
                         optimizer="adamw",
                         learning_rate=lr,
@@ -537,7 +585,7 @@ def _make_all_lr_models(optimizers: List[str], scheduler: str = SCHEDULER) -> Ar
                 for muon_lr, adamw_lr in PT_LR_SWEEP.get("muon", []):
                     tag = f"muonlr{_lr_tag(muon_lr)}-adamwlr{_lr_tag(adamw_lr)}"
                     models.append(JolmoModel(
-                        model_name=f"MuonExpt3-{MODEL_TYPE}-chinchilla-{chinchilla}-muon-{tag}-{scheduler}",
+                        model_name=_pt_run_name(chinchilla, "muon", tag, scheduler),
                         **{**SHARED_MODEL_PARAMS, **schedule, "scheduler": scheduler, "train_chunks": train_chunks},
                         optimizer="muon",
                         muon_lr=muon_lr,
@@ -567,6 +615,49 @@ pretrain_muon_models  = pretrain_muon_wsd  + pretrain_muon_cosine
 # CPT models  (via launch_jolmo/cpt.py)
 # — always applied to all defined pretrained models
 # ---------------------------------------------------------------------------
+
+def tuned_bases_for(chinchillas, optimizers=("adamw", "muon")) -> ArtifactSet:
+    """The tuned-LR wsd pretrain for each (chinchilla x optimizer) in the table.
+
+    Independent of the profile's CHINCHILLAS list, so a CPT pass can span a
+    wider range than the size is currently focused on. Names go through
+    _pt_run_name, so each resolves to whichever schema exists on GCS; a cell
+    with no tuned entry is skipped rather than invented.
+    """
+    sched = PT_LR.get("wsd", {})
+    models = []
+    for chinchilla in chinchillas:
+        schedule = _tokens_for(chinchilla)
+        common = {**SHARED_MODEL_PARAMS, **schedule, "scheduler": "wsd",
+                  "train_chunks": _dclm_chunks_for_tokens(schedule["n_tokens"])}
+        for opt in optimizers:
+            best = sched.get(opt, {}).get(chinchilla)
+            if best is None:
+                continue
+            if opt == "adamw":
+                tag, kw = f"lr{_lr_tag(best)}", dict(
+                    optimizer="adamw", learning_rate=best)
+            else:
+                muon_lr, adamw_lr = best
+                tag = f"muonlr{_lr_tag(muon_lr)}-adamwlr{_lr_tag(adamw_lr)}"
+                kw = dict(optimizer="muon", muon_lr=muon_lr,
+                          learning_rate=adamw_lr)
+            models.append(JolmoModel(
+                model_name=_pt_run_name(chinchilla, opt, tag, "wsd"),
+                **common, **kw))
+    return ArtifactSet(models)
+
+
+# Tuned-LR CPT over a WIDE chinchilla range (0.25 - 32), not just the profile's
+# current focus. adamw bases finetune with adamw; muon bases with muon + adamw.
+CPT_WIDE_CHINCHILLAS = (0.25, 0.5, 1, 2, 4, 8, 16, 32)
+cpt_wide_adamw_bases = tuned_bases_for(CPT_WIDE_CHINCHILLAS, ("adamw",))
+cpt_wide_muon_bases = tuned_bases_for(CPT_WIDE_CHINCHILLAS, ("muon",))
+cpt_wide_bases = cpt_wide_adamw_bases + cpt_wide_muon_bases
+cpt_wide_models = (
+    build_cpt_models(cpt_wide_adamw_bases)
+    + build_cpt_models(cpt_wide_muon_bases, cpt_optimizers=["muon", "adamw"],
+                       muon_adamw_multiplier=0.25))
 
 cpt_adamw_models = build_cpt_models(pretrain_adamw_wsd)
 # cpt-muon: CPT the muon-pretrained models with BOTH optimizers by default —
@@ -603,21 +694,8 @@ cpt_models = cpt_adamw_models + cpt_muon_models
 # ---------------------------------------------------------------------------
 
 _WANT_CPT_ALL = any("cpt-all" in a for a in sys.argv)
-_jolmo_runs_cache: Optional[set] = None
-
-
-def _existing_jolmo_runs() -> set:
-    """Run names of every JolmoModel dir on GCS (one cached listing)."""
-    global _jolmo_runs_cache
-    if _jolmo_runs_cache is None:
-        base = remote_path("JolmoModel").rstrip("/") + "/"
-        out = subprocess.run(["gsutil", "ls", base], capture_output=True, text=True)
-        _jolmo_runs_cache = {
-            line.strip().rstrip("/").rsplit("/", 1)[-1]
-            for line in out.stdout.splitlines() if line.strip()
-        }
-        print(f"[cpt-all] discovered {len(_jolmo_runs_cache)} pretrained run(s) on GCS")
-    return _jolmo_runs_cache
+# _existing_jolmo_runs (the cached GCS listing) is defined above _make_models,
+# which needs it for cross-schema run-name resolution.
 
 
 def _optimal_pt_lr(chinchilla: int, opt: str) -> Optional[float]:
@@ -777,6 +855,16 @@ for _alpha in MUON_ALPHA_SWEEP:
 perturbed_adamw_models = build_perturbed_models(pretrain_adamw_wsd)
 perturbed_muon_models  = build_perturbed_models(pretrain_muon_wsd)
 
+# Gaussian perturbation of EVERY tuned-LR base this size has a table entry for,
+# over a gamma ladder one decade above LADDER_GAMMAS' top mantissas. gamma is
+# the relative noise scale: std = gamma * ||W||_F / sqrt(numel) per tensor.
+PERTURB_WIDE_GAMMAS = [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.1, 0.13]
+_perturb_wide_chins = sorted(
+    set(PT_LR.get("wsd", {}).get("adamw", {})) | set(PT_LR.get("wsd", {}).get("muon", {})))
+perturb_wide_bases = tuned_bases_for(_perturb_wide_chins)
+perturb_wide_models = build_perturbed_models(perturb_wide_bases,
+                                             gammas=PERTURB_WIDE_GAMMAS)
+
 multiseed_perturbed_adamw_models = build_multi_seed_perturbed_models(pretrain_adamw_wsd, gammas=LADDER_GAMMAS)
 multiseed_perturbed_muon_models  = build_multi_seed_perturbed_models(pretrain_muon_wsd, gammas=LADDER_GAMMAS)
 
@@ -826,12 +914,164 @@ pretrain_all_wsd_evals     = ArtifactSet([_pretrain_eval(m) for m in pretrain_al
 pretrain_adamw_evals = pretrain_adamw_wsd_evals
 pretrain_muon_evals  = pretrain_muon_wsd_evals
 
+# ---------------------------------------------------------------------------
+# Every EXISTING adamw pretrain at one chinchilla, reference batch (bs1M) and
+# wd0.1, under BOTH naming schemas — discovered from the GCS listing rather
+# than rebuilt from a table, so nothing is missed and no name is invented.
+# Deliberately no cross-schema collapse: if a config was trained under both
+# names, both runs are scored. Gated on argv (the cpt-all pattern).
+# ---------------------------------------------------------------------------
+
+_WANT_BS1M_EVALS = any("bs1m" in a.lower() for a in sys.argv)
+_WANT_BS_ANY = any("bs-any" in a.lower() for a in sys.argv)
+
+
+def _existing_adamw_bs1m_models(chinchilla) -> ArtifactSet:
+    if not _WANT_BS1M_EVALS:
+        return ArtifactSet([])
+    tag = re.escape(f"{chinchilla:g}")
+    legacy_re = re.compile(
+        rf"^MuonExpt3-{re.escape(MODEL_TYPE)}-chinchilla-{tag}"
+        rf"-adamw-lr([0-9.e+\-]+)-wsd$")
+    sweep_re = re.compile(
+        rf"^PTSweep{_SIZE}-{re.escape(MODEL_TYPE)}-chinchilla-{tag}"
+        rf"-adamw-lr([0-9.e+\-]+)-wd0\.1-bs1M-wsd$")
+    schedule = _tokens_for(chinchilla)
+    common = {**SHARED_MODEL_PARAMS, **schedule, "scheduler": "wsd",
+              "train_chunks": _dclm_chunks_for_tokens(schedule["n_tokens"])}
+    models = []
+    for run in sorted(_existing_jolmo_runs()):
+        m = legacy_re.match(run) or sweep_re.match(run)
+        if not m:
+            continue
+        models.append(JolmoModel(model_name=run, **common,
+                                 optimizer="adamw", learning_rate=float(m.group(1))))
+    if models:
+        print(f"[bs1m-evals] chinchilla-{chinchilla:g}: {len(models)} existing adamw "
+              f"bs1M/wd0.1 pretrain(s) discovered")
+    return ArtifactSet(models)
+
+
+# Every chinchilla either schema has ever trained at 60M.
+ADAMW_BS1M_CHINCHILLAS = (0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128)
+
+c8_adamw_bs1m_models = _existing_adamw_bs1m_models(8)
+c8_adamw_bs1m_evals = ArtifactSet([_pretrain_eval(m) for m in c8_adamw_bs1m_models])
+
+adamw_bs1m_models = ArtifactSet([
+    m for _c in ADAMW_BS1M_CHINCHILLAS for m in _existing_adamw_bs1m_models(_c)])
+adamw_bs1m_evals = ArtifactSet([_pretrain_eval(m) for m in adamw_bs1m_models])
+
+
+# --- Both optimizers, every chinchilla, whatever this $OPTIM_SIZE has ---------
+# Chinchillas come from the run names, not a hard-coded list, so the same stage
+# works unchanged at 30M / 100M / 300M / 600M.
+
+_BS1M_PATTERNS = (
+    # (regex, optimizer) — group 1 chinchilla, 2 main LR, 3 adamw component
+    (rf"^MuonExpt3-{re.escape(MODEL_TYPE)}-chinchilla-([0-9.]+)"
+     rf"-adamw-lr([0-9.e+\-]+)-wsd$", "adamw"),
+    (rf"^PTSweep{_SIZE}-{re.escape(MODEL_TYPE)}-chinchilla-([0-9.]+)"
+     rf"-adamw-lr([0-9.e+\-]+)-wd0\.1-bs1M-wsd$", "adamw"),
+    (rf"^MuonExpt3-{re.escape(MODEL_TYPE)}-chinchilla-([0-9.]+)"
+     rf"-muon-muonlr([0-9.e+\-]+)-adamwlr([0-9.e+\-]+)-wsd$", "muon"),
+    (rf"^PTSweep{_SIZE}-{re.escape(MODEL_TYPE)}-chinchilla-([0-9.]+)"
+     rf"-muon-muonlr([0-9.e+\-]+)-adamwlr([0-9.e+\-]+)-wd0\.1-bs1M-wsd$", "muon"),
+)
+
+
+def _existing_bs1m_models() -> ArtifactSet:
+    """Every existing wd0.1 / bs1M pretrain at this size, both optimizers."""
+    if not _WANT_BS1M_EVALS:
+        return ArtifactSet([])
+    compiled = [(re.compile(p), opt) for p, opt in _BS1M_PATTERNS]
+    by_chin = {}
+    for run in sorted(_existing_jolmo_runs()):
+        for rx, opt in compiled:
+            m = rx.match(run)
+            if not m:
+                continue
+            chin = float(m.group(1))
+            kw = ({"optimizer": "adamw", "learning_rate": float(m.group(2))}
+                  if opt == "adamw" else
+                  {"optimizer": "muon", "muon_lr": float(m.group(2)),
+                   "learning_rate": float(m.group(3))})
+            by_chin.setdefault(chin, []).append((run, kw))
+            break
+    models = []
+    for chin in sorted(by_chin):
+        schedule = _tokens_for(chin)
+        common = {**SHARED_MODEL_PARAMS, **schedule, "scheduler": "wsd",
+                  "train_chunks": _dclm_chunks_for_tokens(schedule["n_tokens"])}
+        for run, kw in by_chin[chin]:
+            models.append(JolmoModel(model_name=run, **common, **kw))
+        n_ad = sum(1 for _, k in by_chin[chin] if k["optimizer"] == "adamw")
+        print(f"[bs1m-evals] {_SIZE} chinchilla-{chin:g}: {n_ad} adamw + "
+              f"{len(by_chin[chin]) - n_ad} muon")
+    print(f"[bs1m-evals] {_SIZE}: {len(models)} bs1M/wd0.1 pretrain(s) total")
+    return ArtifactSet(models)
+
+
+bs1m_models = _existing_bs1m_models()
+bs1m_evals = ArtifactSet([_pretrain_eval(m) for m in bs1m_models])
+
+
+# --- Any batch size, both optimizers, every chinchilla -----------------------
+# The full-grid lrbs stages cannot be used to evaluate the bs2M/bs4M cells:
+# SWEEP_LRS and the muon component pin have both changed since those ran, so
+# the grid they now enumerate mostly does NOT exist on GCS and selecting them
+# would train new models. Discovering from the listing instead evaluates
+# exactly what is there.
+
+_BS_ANY_PATTERNS = (
+    (rf"^PTSweep{_SIZE}-{re.escape(MODEL_TYPE)}-chinchilla-([0-9.]+)"
+     rf"-adamw-lr([0-9.e+\-]+)-wd0\.1-bs(\d+[Mk])-wsd$", "adamw"),
+    (rf"^PTSweep{_SIZE}-{re.escape(MODEL_TYPE)}-chinchilla-([0-9.]+)"
+     rf"-muon-muonlr([0-9.e+\-]+)-adamwlr([0-9.e+\-]+)-wd0\.1-bs(\d+[Mk])-wsd$",
+     "muon"),
+)
+
+
+def _existing_bs_any_models() -> ArtifactSet:
+    """Every existing wd0.1 PTSweep pretrain at this size, ANY batch size."""
+    if not _WANT_BS_ANY:
+        return ArtifactSet([])
+    compiled = [(re.compile(p), opt) for p, opt in _BS_ANY_PATTERNS]
+    by_chin = {}
+    for run in sorted(_existing_jolmo_runs()):
+        for rx, opt in compiled:
+            m = rx.match(run)
+            if not m:
+                continue
+            chin = float(m.group(1))
+            kw = ({"optimizer": "adamw", "learning_rate": float(m.group(2))}
+                  if opt == "adamw" else
+                  {"optimizer": "muon", "muon_lr": float(m.group(2)),
+                   "learning_rate": float(m.group(3))})
+            by_chin.setdefault(chin, []).append((run, kw))
+            break
+    models = []
+    for chin in sorted(by_chin):
+        schedule = _tokens_for(chin)
+        common = {**SHARED_MODEL_PARAMS, **schedule, "scheduler": "wsd",
+                  "train_chunks": _dclm_chunks_for_tokens(schedule["n_tokens"])}
+        for run, kw in by_chin[chin]:
+            models.append(JolmoModel(model_name=run, **common, **kw))
+    print(f"[bs-any] {_SIZE}: {len(models)} wd0.1 pretrain(s) at any batch size")
+    return ArtifactSet(models)
+
+
+bs_any_models = _existing_bs_any_models()
+bs_any_evals = ArtifactSet([_pretrain_eval(m) for m in bs_any_models])
+
 # CPT evals also score the held-out DCLM shard (label "DCLM_heldout"): the
 # forgetting / pretrain-loss axis (x) of the Pareto tradeoff plots, vs the CPT
 # dataset val loss (y).
 _dclm = dict(extra_val_chunks=dclm_heldout_val_chunks,
              extra_val_max_instances=DCLM_HELDOUT_INSTANCES)
 cpt_evals                  = build_cpt_model_evaluations(cpt_models, **_dclm)
+# Evals for the wide (0.25 - 32) tuned-LR CPT matrix.
+cpt_wide_evals             = build_cpt_model_evaluations(cpt_wide_models, **_dclm)
 cpt_all_lrs_evals          = build_cpt_model_evaluations(cpt_all_lrs_models, **_dclm)
 cpt_muon_pretrain_adamw_ft_evals = build_cpt_model_evaluations(cpt_muon_pretrain_adamw_ft, **_dclm)
 cpt_adamw_pretrain_muon_ft_evals = build_cpt_model_evaluations(cpt_adamw_pretrain_muon_ft, **_dclm)
@@ -846,6 +1086,12 @@ muon_sweep_evals    = build_cpt_model_evaluations(muon_sweep_models, **_dclm)
 
 # Perturbed-model loss evals. Like the pretrain evals, fold in the held-out DCLM
 # shard (label "DCLM_heldout") so each perturbed model is scored on the DCLM split.
+# DCLM-heldout evals for the wide perturbation sweep.
+perturb_wide_evals = build_perturbed_model_evaluations(
+    perturb_wide_models,
+    extra_val_chunks=dclm_heldout_val_chunks,
+    extra_val_max_instances=DCLM_HELDOUT_INSTANCES)
+
 perturbed_adamw_evals      = build_perturbed_model_evaluations(
     perturbed_adamw_models,
     extra_val_chunks=dclm_heldout_val_chunks,

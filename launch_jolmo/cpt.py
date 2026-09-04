@@ -11,10 +11,10 @@ from launch_jolmo.training import JolmoModel, CPTModel, ModelEvaluation
 # ---------------------------------------------------------------------------
 
 CPT_DATASETS: List[str] = [
-    "tulu", 
+    # "tulu",
     "starcoder",
     "musicpile",
-    # "alpaca",
+    "alpaca",
     "gsm8k",
     # "siqa",
     # "open-platypus",

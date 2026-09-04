@@ -1,0 +1,410 @@
+"""Muon - AdamW robustness to Gaussian weight perturbation, as heatmaps.
+
+One heatmap per perturbation sigma (gamma). x = model size, y = chinchilla
+(token budget), cell = perturbed held-out DCLM loss of the tuned MUON base
+minus that of the tuned ADAMW base at the same (size, chinchilla).
+
+    negative (blue)  -> muon is more robust at that cell
+    positive (red)   -> adamw is more robust
+    grey             -> no data (a base or its perturbed eval is missing)
+
+The comparison is only meaningful between the tuned-LR bases, so the LRs come
+from PT_LR_BY_MODEL rather than from an argmin over whatever happens to exist.
+
+    python -m new_utils.plot_perturb_heatmap
+"""
+
+import argparse
+import ast
+import json
+import os
+import re
+import subprocess
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.colors import TwoSlopeNorm
+
+BUCKET = "gs://cmu-gpucloud-catheri4"
+LABEL = "DCLM_heldout"
+SIZES = ["30M", "60M", "100M", "300M", "600M"]
+MODEL_TYPE = {"30M": "0.03B", "60M": "0.06B", "100M": "0.1B",
+              "300M": "0.3B", "600M": "0.6B"}
+def _perturb_gammas():
+    """Read PERTURB_WIDE_GAMMAS from the launcher source.
+
+    Hardcoding the list here let it silently drift out of sync with the sweep
+    that produced the artifacts, so new sigmas were plotted as missing.
+    """
+    src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "launch_jolmo", "pretraining_matrix.py")
+    tree = ast.parse(open(src).read())
+    for node in ast.walk(tree):
+        t = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            t = node.target.id
+        elif isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            t = node.targets[0].id
+        if t == "PERTURB_WIDE_GAMMAS":
+            return sorted(float(g) for g in ast.literal_eval(node.value))
+    return [0.02, 0.05, 0.07, 0.1, 0.13]
+
+
+GAMMAS = _perturb_gammas()
+
+INK, MUTED, GRID = "#0b0b0b", "#52514e", "#d9d8d3"
+
+# (size, chinchilla) cells excluded from every perturbation figure. 60M/c64 is
+# held out: its muon-minus-adamw value is non-monotonic in gamma (-0.005 at
+# 0.005, +0.067 at 0.01, +0.010 at 0.02) by more than the ~0.01 noise floor,
+# and the row exists at no other size, so it cannot be cross-checked.
+EXCLUDE_CELLS = {("60M", 64.0)}
+# Diverging pair with a neutral midpoint: cool = muon better, warm = adamw
+# better, grey at exactly zero. Never a rainbow, never a hue at the midpoint.
+CMAP = "RdBu_r"
+
+
+def gamma_tag(gamma):
+    """Mirror training._perturbed_run_name's sigma formatting exactly."""
+    return f"{gamma:.2e}".replace("e-0", "e-").replace("e+0", "e+").replace(".", "_")
+
+
+def lr_tag(lr):
+    return f"{lr:.1e}".replace("e-0", "e-")
+
+
+def tuned_table(size):
+    """{opt: {chinchilla: lr or (muon_lr, component)}} from PT_LR_BY_MODEL."""
+    src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "launch_jolmo", "pretraining_matrix.py")
+    tree = ast.parse(open(src).read())
+    for node in ast.walk(tree):
+        t = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            t = node.target.id
+        elif isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            t = node.targets[0].id
+        if t == "PT_LR_BY_MODEL":
+            return ast.literal_eval(node.value).get(MODEL_TYPE[size], {}).get("wsd", {})
+    return {}
+
+
+def base_names(size, chin, opt, cell):
+    """Both naming schemas for a tuned cell; caller keeps whichever exists."""
+    mt = MODEL_TYPE[size]
+    if opt == "adamw":
+        tag = f"lr{lr_tag(float(cell))}"
+    else:
+        tag = f"muonlr{lr_tag(cell[0])}-adamwlr{lr_tag(cell[1])}"
+    return [f"MuonExpt3-{mt}-chinchilla-{chin:g}-{opt}-{tag}-wsd",
+            f"PTSweep{size}-{mt}-chinchilla-{chin:g}-{opt}-{tag}-wd0.1-bs1M-wsd"]
+
+
+def listing(size, cache):
+    """Cached listing of the size's ModelEvaluation prefix."""
+    p = os.path.join(cache, f"evalnames_{size}.txt")
+    if not os.path.exists(p):
+        out = subprocess.run(
+            ["gsutil", "ls", f"{BUCKET}/Optim-{size}-tuning/ModelEvaluation/"],
+            capture_output=True, text=True).stdout
+        names = [l.strip().rsplit("/", 1)[-1].replace("-eval.json", "")
+                 for l in out.splitlines() if l.strip().endswith("-eval.json")]
+        open(p, "w").write("\n".join(names))
+    return set(open(p).read().split())
+
+
+def fetch(size, names, cache):
+    """Download the named eval JSONs (skipping ones already local)."""
+    d = os.path.join(cache, size)
+    os.makedirs(d, exist_ok=True)
+    todo = [n for n in names if not os.path.exists(os.path.join(d, n + "-eval.json"))]
+    for i in range(0, len(todo), 200):
+        urls = [f"{BUCKET}/Optim-{size}-tuning/ModelEvaluation/{n}-eval.json"
+                for n in todo[i:i + 200]]
+        subprocess.run(["gsutil", "-m", "cp"] + urls + [d],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return d
+
+
+def loss_of(d, name):
+    p = os.path.join(d, name + "-eval.json")
+    if not os.path.exists(p):
+        return None
+    try:
+        return json.load(open(p)).get("by_label", {}).get(LABEL, {}).get("loss")
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def collect(cache):
+    """{gamma: {(size, chinchilla): muon_loss - adamw_loss}} plus the raw losses.
+
+    ``raw`` is keyed (gamma, size, chinchilla, optimizer); gamma None holds the
+    UNPERTURBED base loss, which the degradation plot subtracts.
+    """
+    diffs, raw, chins = {}, {}, set()
+    for size in SIZES:
+        table = tuned_table(size)
+        have = listing(size, cache)
+        wanted, resolved = set(), {}
+        for opt in ("adamw", "muon"):
+            for chin, cell in table.get(opt, {}).items():
+                base = next((b for b in base_names(size, float(chin), opt, cell)
+                             if b in have or any(n.startswith(b + "_perturbed_")
+                                                 for n in have)), None)
+                if base is None:
+                    continue
+                resolved[(float(chin), opt)] = base
+                if base in have:            # the unperturbed reference
+                    wanted.add(base)
+                for g in GAMMAS:
+                    n = f"{base}_perturbed_{gamma_tag(g)}"
+                    if n in have:
+                        wanted.add(n)
+        d = fetch(size, wanted, cache)
+        for (chin, opt), base in resolved.items():
+            if (size, chin) in EXCLUDE_CELLS:
+                continue
+            chins.add(chin)
+            v0 = loss_of(d, base)
+            if v0 is not None:
+                raw[(None, size, chin, opt)] = v0
+            for g in GAMMAS:
+                v = loss_of(d, f"{base}_perturbed_{gamma_tag(g)}")
+                if v is not None:
+                    raw[(g, size, chin, opt)] = v
+        for g in GAMMAS:
+            for chin in {c for c, _ in resolved}:
+                a = raw.get((g, size, chin, "adamw"))
+                m = raw.get((g, size, chin, "muon"))
+                if a is not None and m is not None:
+                    diffs.setdefault(g, {})[(size, chin)] = m - a
+    return diffs, raw, sorted(chins)
+
+
+def degradation_diffs(raw):
+    """{gamma: {(size, chinchilla): muon_degradation - adamw_degradation}}.
+
+    Degradation is (perturbed - unperturbed) per optimizer, so this isolates
+    the ROBUSTNESS difference from the baseline-quality difference: muon starts
+    from a lower unperturbed loss, which flatters it in the absolute-loss view.
+    """
+    out = {}
+    for (g, size, chin, opt), v in raw.items():
+        if g is None or opt != "muon":
+            continue
+        m0 = raw.get((None, size, chin, "muon"))
+        a = raw.get((g, size, chin, "adamw"))
+        a0 = raw.get((None, size, chin, "adamw"))
+        if None in (m0, a, a0):
+            continue
+        out.setdefault(g, {})[(size, chin)] = (v - m0) - (a - a0)
+    return out
+
+
+def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
+         gammas=None, clip_pct=97):
+    # The colour scale is computed from the gammas actually shown, so a
+    # restricted range rescales instead of being flattened by the large-gamma
+    # values that dominate the full set.
+    gs = [g for g in (gammas or GAMMAS) if diffs.get(g)]
+    if not gs:
+        raise SystemExit("no (size, chinchilla) cell has BOTH optimizers perturbed")
+    vals = [v for g in gs for v in diffs[g].values()]
+    # Robust limits: a single outlier (e.g. the 60M/c2 cell at gamma 0.01) would
+    # otherwise set vmax for every panel and flatten all the real structure to
+    # near-white. Clipped cells still carry their true value as text.
+    mag = np.abs(vals)
+    lim = float(np.percentile(mag, clip_pct))
+    if lim <= 0:
+        lim = float(mag.max()) or 1e-6
+    n_clipped = int((mag > lim).sum())
+    norm = TwoSlopeNorm(vmin=-lim, vcenter=0.0, vmax=lim)
+
+    fig, axes = plt.subplots(1, len(gs), figsize=(3.1 * len(gs) + 1.4, 4.6),
+                             squeeze=False)
+    for i, g in enumerate(gs):
+        ax = axes[0][i]
+        M = np.full((len(chins), len(SIZES)), np.nan)
+        for (size, chin), v in diffs[g].items():
+            M[chins.index(chin)][SIZES.index(size)] = v
+        im = ax.imshow(M, cmap=CMAP, norm=norm, aspect="auto", origin="lower")
+        ax.set_xticks(range(len(SIZES)))
+        ax.set_xticklabels(SIZES, fontsize=8.5, rotation=45, ha="right")
+        ax.set_yticks(range(len(chins)))
+        ax.set_yticklabels([f"{c:g}" for c in chins], fontsize=8.5)
+        ax.set_title(f"$\\gamma$ = {g:g}", fontsize=11.5, color=INK)
+        ax.set_xlabel("model size", fontsize=9.5, color=MUTED)
+        if i == 0:
+            ax.set_ylabel("chinchilla (token budget)", fontsize=10, color=INK)
+        # Direct labels: the grid is small enough that the number belongs in
+        # the cell rather than only in the colorbar.
+        for r in range(len(chins)):
+            for c in range(len(SIZES)):
+                if not np.isnan(M[r][c]):
+                    ax.text(c, r, f"{M[r][c]:+.3f}", ha="center", va="center",
+                            fontsize=7, color=INK)
+        ax.set_xticks(np.arange(-.5, len(SIZES), 1), minor=True)
+        ax.set_yticks(np.arange(-.5, len(chins), 1), minor=True)
+        ax.grid(which="minor", color=GRID, linewidth=1)
+        ax.tick_params(which="minor", length=0)
+        ax.tick_params(colors=MUTED)
+
+    cb = fig.colorbar(im, ax=axes[0].tolist(), fraction=0.03, pad=0.02)
+    cb.set_label(cbar_label or "muon - adamw  perturbed DCLM loss",
+                 fontsize=9.5, color=INK)
+    cb.ax.tick_params(labelsize=8, colors=MUTED)
+    fig.suptitle(title or
+                 "Robustness to Gaussian weight perturbation: muon vs adamw",
+                 fontsize=13.5, color=INK)
+    # The interpretation sits under the panels: a second suptitle line collides
+    # with the per-panel gamma titles.
+    if n_clipped:
+        fig.text(0.5, -0.085,
+                 f"colour scale clipped at ±{lim:.3f} ({clip_pct}th pct); "
+                 f"{n_clipped} cell(s) beyond it keep their printed value",
+                 ha="center", fontsize=8, color=MUTED)
+    fig.text(0.5, -0.04, caption or
+             "cell = perturbed held-out DCLM loss, tuned muon base minus tuned "
+             "adamw base    |    negative (blue) = muon degrades less    |    "
+             "white = no data",
+             ha="center", fontsize=9, color=MUTED)
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf")
+
+
+def plot_curves(raw, out, degradation=False):
+    """Rows = model size, columns = optimizer; one line per sigma.
+
+    sigma is an ordered magnitude, so the lines take a single-hue sequential
+    ramp (light = small perturbation, dark = large) rather than categorical
+    colors, which would imply the sigmas are unordered categories.
+    """
+    ramp = plt.cm.Blues(np.linspace(0.35, 1.0, len(GAMMAS)))
+    rows = [s for s in SIZES
+            if any(k[1] == s and k[0] is not None for k in raw)]
+    fig, axes = plt.subplots(len(rows), 2, figsize=(10.5, 2.9 * len(rows)),
+                             squeeze=False, sharex=False)
+    for r, size in enumerate(rows):
+        # A shared y-range per row makes adamw vs muon directly comparable.
+        row_vals = []
+        for opt in ("adamw", "muon"):
+            for g in GAMMAS:
+                for k, v in raw.items():
+                    if k[0] == g and k[1] == size and k[3] == opt:
+                        base = raw.get((None, size, k[2], opt))
+                        if degradation and base is None:
+                            continue
+                        row_vals.append(v - base if degradation else v)
+        for c, opt in enumerate(("adamw", "muon")):
+            ax = axes[r][c]
+            for gi, g in enumerate(GAMMAS):
+                pts = []
+                for k, v in raw.items():
+                    if k[0] != g or k[1] != size or k[3] != opt:
+                        continue
+                    base = raw.get((None, size, k[2], opt))
+                    if degradation:
+                        if base is None:
+                            continue
+                        pts.append((k[2], v - base))
+                    else:
+                        pts.append((k[2], v))
+                pts.sort()
+                if pts:
+                    ax.plot([p[0] for p in pts], [p[1] for p in pts], "o-",
+                            color=ramp[gi], markersize=4.5, linewidth=1.7,
+                            label=f"$\\gamma$={g:g}", zorder=3)
+            if not degradation:
+                base_pts = sorted((k[2], v) for k, v in raw.items()
+                                  if k[0] is None and k[1] == size and k[3] == opt)
+                if base_pts:
+                    ax.plot([p[0] for p in base_pts], [p[1] for p in base_pts],
+                            "--", color=MUTED, linewidth=1.3, zorder=2,
+                            label="unperturbed")
+            ax.set_xscale("log")
+            xs = sorted({k[2] for k in raw if k[1] == size})
+            ax.set_xticks(xs)
+            ax.set_xticklabels([f"{x:g}" for x in xs], fontsize=8)
+            ax.minorticks_off()
+            ax.set_title(f"{size} ({MODEL_TYPE[size]}) — {opt}",
+                         fontsize=10.5, color=INK)
+            ax.grid(True, alpha=0.25, linewidth=0.6)
+            ax.tick_params(labelsize=8, colors=MUTED)
+            if row_vals:
+                lo, hi = min(row_vals), max(row_vals)
+                pad = 0.06 * (hi - lo) if hi > lo else 0.1
+                ax.set_ylim(lo - pad, hi + pad)
+            if r == len(rows) - 1:
+                ax.set_xlabel("chinchilla (token budget)", fontsize=9.5,
+                              color=MUTED)
+            if c == 0:
+                ax.set_ylabel("degradation (nats)" if degradation
+                              else f"{LABEL} loss", fontsize=9.5, color=INK)
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, loc="lower center", ncol=len(h), frameon=False,
+               fontsize=9.5, bbox_to_anchor=(0.5, -0.012))
+    fig.suptitle(
+        ("Loss degradation from Gaussian weight perturbation "
+         "(perturbed - unperturbed)") if degradation else
+        "Post-perturbation held-out DCLM loss",
+        fontsize=13.5, color=INK)
+    fig.tight_layout(rect=(0, 0.012, 1, 0.985))
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf")
+
+
+def main():
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    p = argparse.ArgumentParser()
+    p.add_argument("--cache", default="/mnt/localssd/perturbcache")
+    p.add_argument("--out-dir", default=os.path.join(repo, "colm-moss-latex"))
+    a = p.parse_args()
+    os.makedirs(a.cache, exist_ok=True)
+    os.makedirs(a.out_dir, exist_ok=True)
+
+    diffs, raw, chins = collect(a.cache)
+    for g in GAMMAS:
+        print(f"  gamma {g:<6g} {len(diffs.get(g, {})):3d} comparable cell(s)")
+    plot(diffs, chins, os.path.join(a.out_dir, "perturb-muon-minus-adamw"))
+
+    deg = degradation_diffs(raw)
+    print("degradation-difference cells:",
+          {f"{g:g}": len(v) for g, v in sorted(deg.items())})
+    plot(deg, chins,
+         os.path.join(a.out_dir, "perturb-degradation-diff-muon-minus-adamw"),
+         title="Degradation under Gaussian weight perturbation: muon vs adamw",
+         cbar_label="muon - adamw  loss degradation",
+         caption="cell = (perturbed - unperturbed) for muon minus the same for "
+                 "adamw    |    negative (blue) = muon degrades less    |    "
+                 "white = no data")
+    # Small-gamma versions: the large sigmas set the colour range for the full
+    # figures, leaving the 0.005-0.05 regime nearly uniform. These rescale to it.
+    small = [g for g in GAMMAS if g <= 0.02]
+    plot(diffs, chins, os.path.join(a.out_dir, "perturb-muon-minus-adamw-small"),
+         title="Robustness to Gaussian weight perturbation: muon vs adamw "
+               "($\\gamma \\leq 0.02$)", gammas=small, clip_pct=85)
+    plot(deg, chins,
+         os.path.join(a.out_dir,
+                      "perturb-degradation-diff-muon-minus-adamw-small"),
+         title="Degradation under Gaussian weight perturbation: muon vs adamw "
+               "($\\gamma \\leq 0.02$)",
+         cbar_label="muon - adamw  loss degradation",
+         caption="cell = (perturbed - unperturbed) for muon minus the same for "
+                 "adamw    |    negative (blue) = muon degrades less    |    "
+                 "white = no data",
+         gammas=small, clip_pct=85)
+
+    plot_curves(raw, os.path.join(a.out_dir, "perturb-loss-vs-chinchilla"))
+    plot_curves(raw, os.path.join(a.out_dir, "perturb-degradation-vs-chinchilla"),
+                degradation=True)
+
+
+if __name__ == "__main__":
+    main()

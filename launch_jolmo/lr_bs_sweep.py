@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
@@ -40,10 +41,19 @@ from launch_jolmo.pretraining_matrix import (
     DCLM_HELDOUT_INSTANCES,
     _base_tokens_for,
     _dclm_chunks_for_tokens,
+    _existing_jolmo_runs,
     _lr_tag,
     diversity_val_chunks,
     dclm_heldout_val_chunks,
 )
+
+# A reference-batch cell (wd0.1, bs x1, wsd) is the SAME training configuration
+# as the older MuonExpt3-named pretrain — one model, two naming schemas. When a
+# cell's MuonExpt3 twin already exists on GCS, name the cell after the twin so
+# the existence check skips it instead of retraining a duplicate under the
+# PTSweep name. Gated on argv (the cpt-all pattern) so only lrbs/ft commands
+# pay for the one cached GCS listing at import.
+_ALIAS_EXISTING = any(("lrbs" in a) or a.startswith("ft-") for a in sys.argv)
 
 _SIZE, _PROFILE = active_profile()
 
@@ -52,7 +62,7 @@ _SIZE, _PROFILE = active_profile()
 # tree is wanted.
 DEFAULT_NAME_PREFIX = f"PTSweep{_SIZE}"
 
-SWEEP_LRS: Tuple[float, ...] = (7e-3, 1e-2, 1.4e-2, 2e-2, 2.8e-2, 4e-2, 5.6e-2, 8e-2, 1.2e-1)
+SWEEP_LRS: Tuple[float, ...] = (7e-3, 1e-2, 1.4e-2, 2e-2, 2.8e-2, 4e-2, 5.6e-2, 8e-2, 1.2e-1, 1.6e-1,)
 SWEEP_BS_MULTIPLIERS: Tuple[int, ...] = (1, 2, 4)   # × GLOBAL_BATCH_SIZE
 
 
@@ -102,6 +112,10 @@ class LrBatchSweep:
     # Explicit muon adamw-component pin for chinchillas that have no
     # PT_LR_BY_MODEL entry (e.g. the historical 0.25 sweep). Overrides the table.
     pinned_adamw_lr: Optional[float] = None
+    # Reuse an existing MuonExpt3-named twin instead of training a PTSweep cell.
+    # Set False when the twin was trained under a DIFFERENT recipe (e.g. the
+    # imported 100M jgai runs), so this sweep trains its own comparable cell.
+    alias_existing: bool = True
     # Distinguishes subset stages (e.g. "-hi5") from the full grid's stage name.
     # Cell RUN NAMES are unaffected — overlapping cells still dedupe on GCS.
     label_suffix: str = ""
@@ -251,6 +265,16 @@ class LrBatchSweep:
                     extra = {"optimizer": "muon", "muon_lr": cell_lr,
                              "learning_rate": comp}
                 name = self._cell_name(lr_tag, gbs)
+                if (self.alias_existing
+                        and _ALIAS_EXISTING and mult == 1
+                        and self.weight_decay == 0.1
+                        and self.scheduler == "wsd"
+                        and self._prefix == DEFAULT_NAME_PREFIX):
+                    twin = (f"MuonExpt3-{self.model_type}"
+                            f"-chinchilla-{_chin_tag(self.chinchilla)}"
+                            f"-{self.optimizer}-{lr_tag}-wsd")
+                    if twin in _existing_jolmo_runs():
+                        name = twin
                 if name in seen_names:
                     other = seen_names[name]
                     raise ValueError(
@@ -358,10 +382,89 @@ def above_optimal_sweep(
 
 # Declared: one above-optimal subset per 60M (chinchilla x optimizer) with a
 # tuned cell. Stages: lrbs-0.06B-c<chin>-<opt>-hi5 (+ -evals via the launcher).
+# 16 is included beyond LRBS_60M_CHINCHILLAS: the tuned table has a c16 cell,
+# so an above-optimal subset is well defined there even though the full LR x BS
+# grid was never run at that budget.
+HI5_60M_CHINCHILLAS: Tuple[float, ...] = tuple(
+    dict.fromkeys(tuple(LRBS_60M_CHINCHILLAS) + (16,)))
+
 HI5_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
     s for s in (
         above_optimal_sweep("0.06B", opt, c)
-        for c in dict.fromkeys(LRBS_60M_CHINCHILLAS)   # order-preserving dedupe
+        for c in HI5_60M_CHINCHILLAS
+        for opt in ("adamw", "muon")
+    )
+    if s is not None
+)
+
+# 100M above-optimal subsets — chinchillas 2 and 4 only. Stages:
+# lrbs-0.1B-c<chin>-<opt>-hi5 (+ -evals), umbrella lrbs-hi5-100m in the
+# launcher. Under a non-100M $OPTIM_SIZE these build 0 models (size_ok guard).
+HI5_100M_CHINCHILLAS: Tuple[float, ...] = (2, 4)
+HI5_100M_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
+    s for s in (
+        above_optimal_sweep("0.1B", opt, c)
+        for c in HI5_100M_CHINCHILLAS
+        for opt in ("adamw", "muon")
+    )
+    if s is not None
+)
+
+# Muon LR sweep at the reference batch (bs x1) for chinchillas 1-8. The adamw
+# component is pinned, per cell, to PT_LR_BY_MODEL[...]["adamw"][chin] — i.e.
+# the RETUNED adamw optima (c1 2e-2, c2 1e-2, c4 1e-2, c8 1.4e-2) — so the only
+# axis swept is muon_lr. Grid matches the existing c2 bs1M cells so those are
+# skipped rather than retrained.
+MUON_C18_LRS: Tuple[float, ...] = (7e-3, 1e-2, 1.4e-2, 2e-2)
+MUON_C18_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
+    LrBatchSweep(model_type="0.06B", optimizer="muon", chinchilla=c,
+                 lrs=MUON_C18_LRS, bs_multipliers=(1,), label_suffix="-bs1m")
+    for c in (1, 2, 4, 8)
+)
+
+# 30M muon LR sweep at chinchillas 1-2, reference batch, with the adamw
+# component pinned to PT_LR_BY_MODEL's tuned adamw (c1 2.8e-2, c2 4e-2).
+MUON_30M_C12_LRS: Tuple[float, ...] = (1e-2, 1.4e-2, 2e-2)
+MUON_30M_C12_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
+    LrBatchSweep(model_type="0.03B", optimizer="muon", chinchilla=c,
+                 lrs=MUON_30M_C12_LRS, bs_multipliers=(1,),
+                 label_suffix="-bs1m")
+    for c in (1, 2)
+)
+
+# c16/c32 muon sweep at the reference batch with the adamw component pinned to
+# the (new) tuned 1e-2 — matches the 10 PTSweep60M-…-adamwlr1.0e-2-…bs1M cells
+# already on GCS. Declared here (chinchillas outside LRBS_60M_CHINCHILLAS) so
+# their evals have stages. label_suffix keeps the stage names distinct.
+LRBS_C1632_MUON_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
+    LrBatchSweep(model_type="0.06B", optimizer="muon", chinchilla=c,
+                 lrs=(5e-3, 7e-3, 1e-2, 1.4e-2, 2e-2), bs_multipliers=(1,),
+                 pinned_adamw_lr=1e-2, label_suffix="-a1e-2")
+    for c in (16, 32)
+)
+
+# 600M above-optimal subsets — chinchillas 0.5 and 1. Stages:
+# lrbs-0.6B-c<chin>-<opt>-hi5 (+ -evals), umbrella lrbs-hi5-600m in the
+# launcher. Under a non-600M $OPTIM_SIZE these build 0 models (size_ok guard).
+HI5_600M_CHINCHILLAS: Tuple[float, ...] = (0.5, 1)
+HI5_600M_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
+    s for s in (
+        above_optimal_sweep("0.6B", opt, c)
+        for c in HI5_600M_CHINCHILLAS
+        for opt in ("adamw", "muon")
+    )
+    if s is not None
+)
+
+# 300M above-optimal subsets — chinchillas 2 and 4. Stages:
+# lrbs-0.3B-c<chin>-<opt>-hi5 (+ -evals), umbrella lrbs-hi5-300m in the
+# launcher. num_processes pinned to 8: one run gets all 8 GPUs (and an
+# OPTIM_NUM_PROCESSES override cannot shrink it).
+HI5_300M_CHINCHILLAS: Tuple[float, ...] = (2, 4)
+HI5_300M_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
+    s for s in (
+        above_optimal_sweep("0.3B", opt, c, num_processes=8)
+        for c in HI5_300M_CHINCHILLAS
         for opt in ("adamw", "muon")
     )
     if s is not None
