@@ -411,3 +411,100 @@ if _WANT_FT:
             _bs_best_sweeps.append(FtSweep(base=_b, label_suffix="-bsbest"))
 
 BS_BEST_SWEEPS: Tuple[FtSweep, ...] = tuple(_bs_best_sweeps)
+
+# ---------------------------------------------------------------------------
+# FT every existing pretrain at one (size, chinchilla) cell — ALL pretrain LRs,
+# not just the tuned or best one. Discovered from the GCS listing so a newly
+# trained LR is picked up without editing code. Selected by $OPTIM_FT_CHIN
+# (default 2) and only active for the size named in FT_ALLCHIN_SIZES.
+# ---------------------------------------------------------------------------
+
+FT_ALLCHIN_SIZES = {"600M"}
+FT_ALLCHIN_DEFAULT = 2.0
+
+_allchin_sweeps = []
+if _WANT_FT:
+    from launch_jolmo.sizes import active_profile as _ap
+    from launch_jolmo.pretraining_matrix import _existing_jolmo_runs as _runs
+    _sz, _prof = _ap()
+    if _sz in FT_ALLCHIN_SIZES:
+        _chin = float(_os.environ.get("OPTIM_FT_CHIN", FT_ALLCHIN_DEFAULT))
+        _mt = _prof["model_type"]
+        _legacy = re.compile(
+            rf"^MuonExpt3-{re.escape(_mt)}-chinchilla-{_chin:g}"
+            rf"-(?:adamw-lr(?P<alr>[0-9.e\-]+)"
+            rf"|muon-muonlr(?P<mlr>[0-9.e\-]+)-adamwlr(?P<comp>[0-9.e\-]+))-wsd$")
+        _sweep_re = re.compile(
+            rf"^PTSweep{_sz}-{re.escape(_mt)}-chinchilla-{_chin:g}"
+            rf"-(?:adamw-lr(?P<alr>[0-9.e\-]+)"
+            rf"|muon-muonlr(?P<mlr>[0-9.e\-]+)-adamwlr(?P<comp>[0-9.e\-]+))"
+            rf"-wd0\.1-bs1M-wsd$")
+        _lb = LrBatchSweep(model_type=_mt, optimizer="adamw",
+                           chinchilla=_chin, bs_multipliers=(1,))
+        for _n in sorted(_runs()):
+            _m = _legacy.match(_n) or _sweep_re.match(_n)
+            if not _m:
+                continue
+            _kw = ({"optimizer": "adamw",
+                    "learning_rate": float(_m.group("alr"))}
+                   if _m.group("alr") else
+                   {"optimizer": "muon",
+                    "muon_lr": float(_m.group("mlr")),
+                    "learning_rate": float(_m.group("comp"))})
+            _b = JolmoModel(model_name=_n,
+                            **_lb._shared_params(GLOBAL_BATCH_SIZE),
+                            **_lb._schedule_for(GLOBAL_BATCH_SIZE), **_kw)
+            _allchin_sweeps.append(
+                FtSweep(base=_b, label_suffix=f"-allchin{_chin:g}"))
+        print(f"[ft-allchin] {_sz} chinchilla-{_chin:g}: "
+              f"{len(_allchin_sweeps)} pretrain(s) to finetune")
+
+ALLCHIN_SWEEPS: Tuple[FtSweep, ...] = tuple(_allchin_sweeps)
+
+# ---------------------------------------------------------------------------
+# DCLM-replay finetune sweep over the TUNED-optimal pretrained base at every
+# chinchilla the size has a PT_LR_BY_MODEL entry for, both optimizers.
+#
+# Only r > 0 is swept: r = 0 deliberately keeps the plain CPT run name, so the
+# no-replay control is whatever the plain ft/cpt sweeps already produced and is
+# reused rather than retrained.
+# ---------------------------------------------------------------------------
+
+FT_REPLAY_SIZES = {"60M", "100M"}
+FT_REPLAY_SWEEP_FRACTIONS: Tuple[float, ...] = (0.1, 0.2, 0.3)
+
+_replay_sweeps = []
+if _WANT_FT:
+    from launch_jolmo.sizes import active_profile as _ap_r
+    from launch_jolmo.pretraining_matrix import (
+        tuned_bases_for as _tuned_bases_for, PT_LR as _PT_LR)
+    _sz_r, _ = _ap_r()
+    if _sz_r in FT_REPLAY_SIZES:
+        _wsd = _PT_LR.get("wsd", {})
+        _chins = sorted(set(_wsd.get("adamw", {})) | set(_wsd.get("muon", {})))
+        # Every tuned chinchilla by default. $OPTIM_REPLAY_CHINCHILLAS narrows
+        # the ladder without editing this file, e.g.
+        # OPTIM_REPLAY_CHINCHILLAS=1,2,4,8 -- the axis under study is the
+        # replay fraction, so a shorter budget ladder cuts the run count
+        # roughly proportionally without collapsing the comparison.
+        _want_c = _os.environ.get("OPTIM_REPLAY_CHINCHILLAS", "").strip()
+        if _want_c:
+            _keep = {float(x) for x in _want_c.replace(",", " ").split()}
+            _missing = _keep - set(_chins)
+            if _missing:
+                raise ValueError(
+                    f"OPTIM_REPLAY_CHINCHILLAS asks for "
+                    f"{[f'{c:g}' for c in sorted(_missing)]}, which {_sz_r} "
+                    f"has no tuned LR for; available: "
+                    f"{[f'{c:g}' for c in _chins]}")
+            _chins = [c for c in _chins if c in _keep]
+        for _b in _tuned_bases_for(_chins):
+            _replay_sweeps.append(FtSweep(
+                base=_b,
+                replay_fractions=FT_REPLAY_SWEEP_FRACTIONS,
+                label_suffix="-replay",
+            ))
+        print(f"[ft-replay] {_sz_r}: {len(_replay_sweeps)} tuned base(s) over "
+              f"chinchillas {[f'{c:g}' for c in _chins]}")
+
+REPLAY_SWEEPS: Tuple[FtSweep, ...] = tuple(_replay_sweeps)

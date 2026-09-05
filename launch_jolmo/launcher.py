@@ -320,6 +320,8 @@ executor.stage_group("lrbs-hi5-300m-evals",
 from launch_jolmo.ft_sweep import SWEEPS as FT_SWEEPS
 from launch_jolmo.ft_sweep import CROSSOVER_SWEEPS as FT_XOVER_SWEEPS
 from launch_jolmo.ft_sweep import BS_BEST_SWEEPS as FT_BSBEST_SWEEPS
+from launch_jolmo.ft_sweep import ALLCHIN_SWEEPS as FT_ALLCHIN_SWEEPS
+from launch_jolmo.ft_sweep import REPLAY_SWEEPS as FT_REPLAY_SWEEPS
 for _sweep in FT_SWEEPS:
     executor.stage(_sweep.label, _sweep.models())
     executor.stage(f"{_sweep.label}-evals", _sweep.evals())
@@ -401,6 +403,29 @@ executor.stage_group("ft-bs-best-60m-c1-c4",
                      + tuple(_s.label for _s in _bsb_c14))
 executor.stage_group("ft-bs-best-60m-c1-c4-evals",
                      tuple(f"{_s.label}-evals" for _s in _bsb_c14))
+# FT every pretrain LR at one (size, chinchilla) cell — see FT_ALLCHIN_SIZES.
+for _sweep in FT_ALLCHIN_SWEEPS:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+if FT_ALLCHIN_SWEEPS:
+    executor.stage("ft-allchin-bases", [_s.base for _s in FT_ALLCHIN_SWEEPS])
+    executor.stage_group("ft-allchin",
+                         ("ft-allchin-bases",)
+                         + tuple(_s.label for _s in FT_ALLCHIN_SWEEPS))
+    executor.stage_group("ft-allchin-evals",
+                         tuple(f"{_s.label}-evals" for _s in FT_ALLCHIN_SWEEPS))
+# DCLM-replay FT over the tuned bases, named per size so the two can run on
+# separate machines against the same bucket without colliding.
+for _sweep in FT_REPLAY_SWEEPS:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+if FT_REPLAY_SWEEPS:
+    _rep = f"ft-replay-{_SIZE.lower()}"
+    executor.stage(f"{_rep}-bases", [_s.base for _s in FT_REPLAY_SWEEPS])
+    executor.stage_group(_rep, (f"{_rep}-bases",)
+                         + tuple(_s.label for _s in FT_REPLAY_SWEEPS))
+    executor.stage_group(f"{_rep}-evals",
+                         tuple(f"{_s.label}-evals" for _s in FT_REPLAY_SWEEPS))
 # Same, over the c1/c2/c4/c8 hi5 bases.
 _hi5_c1248_base_names = {
     _m.run_name
