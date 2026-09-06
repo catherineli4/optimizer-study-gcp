@@ -508,3 +508,65 @@ if _WANT_FT:
               f"chinchillas {[f'{c:g}' for c in _chins]}")
 
 REPLAY_SWEEPS: Tuple[FtSweep, ...] = tuple(_replay_sweeps)
+
+# ---------------------------------------------------------------------------
+# Cross-size batch-size FT study: the best-LR pretrain at each
+# (size, chinchilla, batch, optimizer) cell for 30M c2, 60M c1/2/4, 100M c2.
+# 30 bases = 5 (size, chinchilla) cells x 3 batch sizes x 2 optimizers.
+#
+# Frozen by name for the same reason as BS_BEST_BASES_60M: a muon cell's adamw
+# component is pinned to whatever PT_LR_BY_MODEL held when it was trained, so
+# regenerating from the live grid would miss cells that actually exist. Derived
+# by argmin of DCLM_heldout over each cell, the same rule the besttable figures
+# use. $OPTIM_SIZE selects which of these are live (via LrBatchSweep.size_ok),
+# so run the stage once per size.
+#
+# label_suffix only names the stage, never the run, so the 60M entries here
+# share run names with ft-bs-best-60m and dedupe against it on the exists check.
+# ---------------------------------------------------------------------------
+
+BS_BEST_XSIZE_BASES = (
+    "PTSweep30M-0.03B-chinchilla-2-adamw-lr5.6e-2-wd0.1-bs1M-wsd",
+    "PTSweep30M-0.03B-chinchilla-2-adamw-lr2.8e-2-wd0.1-bs2M-wsd",
+    "PTSweep30M-0.03B-chinchilla-2-adamw-lr8.0e-2-wd0.1-bs4M-wsd",
+    "PTSweep30M-0.03B-chinchilla-2-muon-muonlr2.0e-2-adamwlr4.0e-2-wd0.1-bs1M-wsd",
+    "PTSweep30M-0.03B-chinchilla-2-muon-muonlr1.4e-2-adamwlr4.0e-2-wd0.1-bs2M-wsd",
+    "PTSweep30M-0.03B-chinchilla-2-muon-muonlr1.0e-2-adamwlr4.0e-2-wd0.1-bs4M-wsd",
+    "PTSweep60M-0.06B-chinchilla-1-adamw-lr2.0e-2-wd0.1-bs1M-wsd",
+    "PTSweep60M-0.06B-chinchilla-1-adamw-lr4.0e-2-wd0.1-bs2M-wsd",
+    "PTSweep60M-0.06B-chinchilla-1-adamw-lr5.6e-2-wd0.1-bs4M-wsd",
+    "PTSweep60M-0.06B-chinchilla-1-muon-muonlr1.4e-2-adamwlr1.4e-2-wd0.1-bs1M-wsd",
+    "PTSweep60M-0.06B-chinchilla-1-muon-muonlr1.4e-2-adamwlr2.0e-2-wd0.1-bs2M-wsd",
+    "PTSweep60M-0.06B-chinchilla-1-muon-muonlr1.4e-2-adamwlr2.8e-2-wd0.1-bs4M-wsd",
+    "PTSweep60M-0.06B-chinchilla-2-adamw-lr2.0e-2-wd0.1-bs1M-wsd",
+    "PTSweep60M-0.06B-chinchilla-2-adamw-lr2.0e-2-wd0.1-bs2M-wsd",
+    "PTSweep60M-0.06B-chinchilla-2-adamw-lr2.8e-2-wd0.1-bs4M-wsd",
+    "PTSweep60M-0.06B-chinchilla-2-muon-muonlr1.4e-2-adamwlr2.8e-2-wd0.1-bs1M-wsd",
+    "PTSweep60M-0.06B-chinchilla-2-muon-muonlr1.4e-2-adamwlr1.4e-2-wd0.1-bs2M-wsd",
+    "PTSweep60M-0.06B-chinchilla-2-muon-muonlr1.4e-2-adamwlr2.0e-2-wd0.1-bs4M-wsd",
+    "PTSweep60M-0.06B-chinchilla-4-adamw-lr1.0e-2-wd0.1-bs1M-wsd",
+    "PTSweep60M-0.06B-chinchilla-4-adamw-lr1.4e-2-wd0.1-bs2M-wsd",
+    "PTSweep60M-0.06B-chinchilla-4-adamw-lr1.4e-2-wd0.1-bs4M-wsd",
+    "PTSweep60M-0.06B-chinchilla-4-muon-muonlr1.4e-2-adamwlr2.8e-2-wd0.1-bs1M-wsd",
+    "PTSweep60M-0.06B-chinchilla-4-muon-muonlr9.9e-3-adamwlr9.9e-3-wd0.1-bs2M-wsd",
+    "PTSweep60M-0.06B-chinchilla-4-muon-muonlr1.4e-2-adamwlr1.4e-2-wd0.1-bs4M-wsd",
+    "PTSweep100M-0.1B-chinchilla-2-adamw-lr1.0e-2-wd0.1-bs1M-wsd",
+    "PTSweep100M-0.1B-chinchilla-2-adamw-lr2.0e-2-wd0.1-bs2M-wsd",
+    "PTSweep100M-0.1B-chinchilla-2-adamw-lr2.0e-2-wd0.1-bs4M-wsd",
+    "PTSweep100M-0.1B-chinchilla-2-muon-muonlr1.4e-2-adamwlr1.0e-2-wd0.1-bs1M-wsd",
+    "PTSweep100M-0.1B-chinchilla-2-muon-muonlr2.0e-2-adamwlr1.0e-2-wd0.1-bs2M-wsd",
+    "PTSweep100M-0.1B-chinchilla-2-muon-muonlr1.0e-2-adamwlr1.0e-2-wd0.1-bs4M-wsd",
+)
+
+_bs_best_x_sweeps = []
+if _WANT_FT:
+    for _name in BS_BEST_XSIZE_BASES:
+        _b = _base_from_frozen_name(_name)
+        if _b is not None:
+            _bs_best_x_sweeps.append(FtSweep(base=_b, label_suffix="-bsbestx"))
+    from launch_jolmo.sizes import active_profile as _ap_x
+    print(f"[ft-bs-best-x] {_ap_x()[0]}: {len(_bs_best_x_sweeps)} of "
+          f"{len(BS_BEST_XSIZE_BASES)} base(s) live at this size")
+
+BS_BEST_XSIZE_SWEEPS: Tuple[FtSweep, ...] = tuple(_bs_best_x_sweeps)
+

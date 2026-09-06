@@ -322,6 +322,7 @@ from launch_jolmo.ft_sweep import CROSSOVER_SWEEPS as FT_XOVER_SWEEPS
 from launch_jolmo.ft_sweep import BS_BEST_SWEEPS as FT_BSBEST_SWEEPS
 from launch_jolmo.ft_sweep import ALLCHIN_SWEEPS as FT_ALLCHIN_SWEEPS
 from launch_jolmo.ft_sweep import REPLAY_SWEEPS as FT_REPLAY_SWEEPS
+from launch_jolmo.ft_sweep import BS_BEST_XSIZE_SWEEPS
 for _sweep in FT_SWEEPS:
     executor.stage(_sweep.label, _sweep.models())
     executor.stage(f"{_sweep.label}-evals", _sweep.evals())
@@ -563,6 +564,20 @@ executor.stage("spectrum-all",      spectrum_all_evals)
 # ---------------------------------------------------------------------------
 # CLI entrypoint
 # ---------------------------------------------------------------------------
+
+# --- Cross-size batch-size FT (30M c2, 60M c1/2/4, 100M c2 best-LR cells) ---
+for _sweep in BS_BEST_XSIZE_SWEEPS:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+if BS_BEST_XSIZE_SWEEPS:
+    # Bases go INSIDE the group: the executor resolves dependencies by object
+    # identity, so a base outside the selected set raises "not in artifact set".
+    executor.stage("ft-bs-best-x-bases",
+                   [_s.base for _s in BS_BEST_XSIZE_SWEEPS])
+    executor.stage_group("ft-bs-best-x", ("ft-bs-best-x-bases",)
+                         + tuple(_s.label for _s in BS_BEST_XSIZE_SWEEPS))
+    executor.stage_group("ft-bs-best-x-evals",
+                         tuple(f"{_s.label}-evals" for _s in BS_BEST_XSIZE_SWEEPS))
 
 if __name__ == "__main__":
     executor.auto_cli()
