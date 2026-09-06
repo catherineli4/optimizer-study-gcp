@@ -419,7 +419,7 @@ BS_BEST_SWEEPS: Tuple[FtSweep, ...] = tuple(_bs_best_sweeps)
 # (default 2) and only active for the size named in FT_ALLCHIN_SIZES.
 # ---------------------------------------------------------------------------
 
-FT_ALLCHIN_SIZES = {"600M"}
+FT_ALLCHIN_SIZES = {"600M", "60M"}
 FT_ALLCHIN_DEFAULT = 2.0
 
 _allchin_sweeps = []
@@ -441,9 +441,19 @@ if _WANT_FT:
             rf"-wd0\.1-bs1M-wsd$")
         _lb = LrBatchSweep(model_type=_mt, optimizer="adamw",
                            chinchilla=_chin, bs_multipliers=(1,))
+        # $OPTIM_FT_OPT restricts the cell to one PRETRAIN optimizer ("adamw"
+        # or "muon"); unset means both. The CPT arms each base gets are
+        # unaffected -- a muon-pretrained base still gets adamw and muon CPT.
+        _want_opt = _os.environ.get("OPTIM_FT_OPT", "").strip().lower()
+        if _want_opt not in ("", "adamw", "muon"):
+            raise ValueError(
+                f"OPTIM_FT_OPT={_want_opt!r} is not 'adamw' or 'muon'")
         for _n in sorted(_runs()):
             _m = _legacy.match(_n) or _sweep_re.match(_n)
             if not _m:
+                continue
+            _is_adamw = bool(_m.group("alr"))
+            if _want_opt and _is_adamw != (_want_opt == "adamw"):
                 continue
             _kw = ({"optimizer": "adamw",
                     "learning_rate": float(_m.group("alr"))}
@@ -456,7 +466,8 @@ if _WANT_FT:
                             **_lb._schedule_for(GLOBAL_BATCH_SIZE), **_kw)
             _allchin_sweeps.append(
                 FtSweep(base=_b, label_suffix=f"-allchin{_chin:g}"))
-        print(f"[ft-allchin] {_sz} chinchilla-{_chin:g}: "
+        print(f"[ft-allchin] {_sz} chinchilla-{_chin:g}"
+              f"{' ' + _want_opt if _want_opt else ''}: "
               f"{len(_allchin_sweeps)} pretrain(s) to finetune")
 
 ALLCHIN_SWEEPS: Tuple[FtSweep, ...] = tuple(_allchin_sweeps)
