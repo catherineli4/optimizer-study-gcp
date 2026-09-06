@@ -18,6 +18,7 @@ import subprocess
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 
 # dataviz categorical slots: 1 blue = adamw, 2 orange = muon. Ink stays neutral.
 COLOR = {"adamw": "#2a78d6", "muon": "#eb6834"}
@@ -234,6 +235,12 @@ def plot_size(size, data, ntok, out, split_schema=False):
                         xytext=(0, dy), ha="center", va=va, fontsize=8.5,
                         fontweight="bold", color=COLOR[opt], zorder=5)
         ax.set_xscale("log")
+        # A narrow LR span leaves matplotlib's log minor ticks (2x, 3x, 4x,
+        # 6x) close enough to collide into unreadable mush, as on c32. Label
+        # only the majors and cap how many of those print.
+        ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+        ax.xaxis.set_major_locator(mticker.LogLocator(numticks=4))
+        ax.xaxis.set_major_formatter(mticker.LogFormatterSciNotation())
         ax.set_title(f"chinchilla = {chin:g}", fontsize=11, color=INK)
         ax.set_xlabel("swept LR  (muon: muon_lr)", fontsize=8.5, color=MUTED)
         if i % ncol == 0:
