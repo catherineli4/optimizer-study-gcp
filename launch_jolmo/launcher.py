@@ -16,6 +16,7 @@ _SIZE, _PROFILE = active_profile()
 Project.init(_PROFILE["project"])
 
 from launch_jolmo.pretraining_matrix import (
+    ewc_models, ewc_evals,
     pretrain_adamw_wsd,
     pretrain_adamw_cosine,
     pretrain_muon_wsd,
@@ -578,6 +579,10 @@ if BS_BEST_XSIZE_SWEEPS:
                          + tuple(_s.label for _s in BS_BEST_XSIZE_SWEEPS))
     executor.stage_group("ft-bs-best-x-evals",
                          tuple(f"{_s.label}-evals" for _s in BS_BEST_XSIZE_SWEEPS))
+
+# --- EWC finetuning (chinchilla-4 bases; run with OPTIM_SIZE=60M) ---
+executor.stage("ewc",        ewc_models)
+executor.stage("ewc-evals",  ewc_evals)
 
 if __name__ == "__main__":
     executor.auto_cli()

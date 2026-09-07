@@ -186,6 +186,7 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
                 8: 2.0e-2,
                 16: 2.0e-2,
                 32: 1.4e-2,
+                64: 1.0e-2,
             },
             "muon": {
                 # (muon_lr, adamw_component_lr) measured from the completed muon
@@ -205,7 +206,8 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
                 4: (1.4e-2, 2.0e-2),
                 8: (1.0e-2, 2.0e-2),
                 16: (1.4e-2, 2.0e-2),
-                32: (1.0e-2, 1.4e-2)
+                32: (1.0e-2, 1.4e-2),
+                64: (1.4e-2, 1.e-2),
             },
         },
     },
@@ -1093,6 +1095,36 @@ perturb_wide_evals = build_perturbed_model_evaluations(
     perturb_wide_models,
     extra_val_chunks=dclm_heldout_val_chunks,
     extra_val_max_instances=DCLM_HELDOUT_INSTANCES)
+
+# ---------------------------------------------------------------------------
+# EWC finetuning — a third method beside plain CPT and DCLM replay.
+#
+# Bases are the chinchilla-4 models of the active size, so run with
+# OPTIM_SIZE=60M. The Fisher is estimated on dclm_replay_chunks: the SAME unseen
+# DCLM shard replay draws from. It is beyond every run's training data and is
+# distinct from the held-out eval shard, so estimating F cannot contaminate the
+# DCLM_heldout axis these runs are scored on.
+# ---------------------------------------------------------------------------
+
+EWC_CHINCHILLA = 4
+EWC_DATASETS = ["gsm8k"]
+
+from launch_jolmo.cpt import CPT_LR_SWEEP  # noqa: E402
+from launch_jolmo.ewc import EWC_LAMBDAS, build_ewc_models  # noqa: E402
+from launch_jolmo.ft_sweep import REPLAY_DCLM_CHUNK as _EWC_FISHER_CHUNK  # noqa: E402
+
+dclm_replay_chunks: Tuple[Chunk, ...] = (_EWC_FISHER_CHUNK,)
+
+ewc_bases = tuned_bases_for([EWC_CHINCHILLA])
+ewc_models = build_ewc_models(
+    ewc_bases,
+    fisher_chunks=dclm_replay_chunks,
+    lr_sweep=CPT_LR_SWEEP,
+    lambdas=EWC_LAMBDAS,
+    datasets=EWC_DATASETS,
+)
+ewc_evals = ArtifactSet([_pretrain_eval(m) for m in ewc_models])
+
 
 perturbed_adamw_evals      = build_perturbed_model_evaluations(
     perturbed_adamw_models,
