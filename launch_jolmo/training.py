@@ -1572,6 +1572,10 @@ def _get_val_chunks_for(model: Any) -> Tuple[Tuple[str, Chunk], ...]:
     elif isinstance(model, InterpolatedModel):
         # Evaluate on the finetuned model's val sets (CPT val + pretrain val).
         return _get_val_chunks_for(model.finetuned_model)
+    elif hasattr(model, "validation_chunks"):
+        # EWCModel lives in launch_jolmo.ewc, which imports THIS module, so it
+        # cannot be named here without a cycle. Match it structurally instead.
+        return model.validation_chunks
     return ()
 
 
@@ -1590,6 +1594,10 @@ def _get_base_jolmo(model: Any) -> JolmoModel:
         return _get_base_jolmo(model.source_model)
     elif isinstance(model, InterpolatedModel):
         return _get_base_jolmo(model.finetuned_model)
+    elif hasattr(model, "pretrained_model"):
+        # EWCModel — matched structurally to avoid the import cycle (see
+        # _get_val_chunks_for above).
+        return _get_base_jolmo(model.pretrained_model)
     raise TypeError(f"Cannot resolve base JolmoModel from {type(model)}")
 
 
