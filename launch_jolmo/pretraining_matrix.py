@@ -201,6 +201,8 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
                 # swept range (1e-2), so the true optimum likely sits below it;
                 # and the top-two gaps are <= 0.008 CE, so the picks are soft.
                 # Extend the grid downward before treating these as final.
+                0.25: (1.4e-2, 1.6e-1),
+                0.5: (1.4e-2, 1.2e-1),
                 1: (1.0e-2, 5.6e-2),
                 2: (2e-2, 5.6e-2),
                 4: (1.4e-2, 2.0e-2),
@@ -1106,7 +1108,10 @@ perturb_wide_evals = build_perturbed_model_evaluations(
 # DCLM_heldout axis these runs are scored on.
 # ---------------------------------------------------------------------------
 
-EWC_CHINCHILLA = 4
+# Every chinchilla with a tuned LR at the active size, i.e. the best-LR base of
+# each (chinchilla x optimizer) cell -- the same base set the perturbation and
+# replay sweeps use. $OPTIM_EWC_CHINCHILLAS narrows it, e.g.
+# OPTIM_EWC_CHINCHILLAS=1,2,4,8, since the full ladder is a large job.
 EWC_DATASETS = ["gsm8k"]
 
 from launch_jolmo.cpt import CPT_LR_SWEEP  # noqa: E402
@@ -1115,7 +1120,20 @@ from launch_jolmo.ft_sweep import REPLAY_DCLM_CHUNK as _EWC_FISHER_CHUNK  # noqa
 
 dclm_replay_chunks: Tuple[Chunk, ...] = (_EWC_FISHER_CHUNK,)
 
-ewc_bases = tuned_bases_for([EWC_CHINCHILLA])
+_ewc_wsd = PT_LR.get("wsd", {})
+EWC_CHINCHILLAS = sorted(set(_ewc_wsd.get("adamw", {})) | set(_ewc_wsd.get("muon", {})))
+_ewc_want = os.environ.get("OPTIM_EWC_CHINCHILLAS", "").strip()
+if _ewc_want:
+    _ewc_keep = {float(x) for x in _ewc_want.replace(",", " ").split()}
+    _ewc_missing = _ewc_keep - set(EWC_CHINCHILLAS)
+    if _ewc_missing:
+        raise ValueError(
+            f"OPTIM_EWC_CHINCHILLAS asks for "
+            f"{[f'{c:g}' for c in sorted(_ewc_missing)]}, which {MODEL_TYPE} has "
+            f"no tuned LR for; available: {[f'{c:g}' for c in EWC_CHINCHILLAS]}")
+    EWC_CHINCHILLAS = [c for c in EWC_CHINCHILLAS if c in _ewc_keep]
+
+ewc_bases = tuned_bases_for(EWC_CHINCHILLAS)
 ewc_models = build_ewc_models(
     ewc_bases,
     fisher_chunks=dclm_replay_chunks,
