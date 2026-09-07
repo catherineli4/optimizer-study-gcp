@@ -46,16 +46,21 @@ class WindowSampler:
     repetition explicitly via ``max_repetition_ratio`` on the source mixture.
     """
 
-    def __init__(self, paths: Sequence[str], seq_len: int, seed: int):
+    def __init__(self, paths: Sequence[str], seq_len: int, seed: int,
+                 dtype: str = "uint32"):
         if not paths:
-            raise ValueError("WindowSampler needs at least one .npy path")
+            raise ValueError("WindowSampler needs at least one token path")
         self.seq_len = seq_len
         self.rng = np.random.default_rng(seed)
         self.arrays = []
         lengths = []
         for p in paths:
-            a = np.load(p, mmap_mode="r")
-            a = a.reshape(-1)
+            # These files carry a .npy extension but hold RAW token arrays with
+            # no npy header -- np.load reads the leading tokens as a pickle
+            # header and dies with "This file contains pickled (object) data".
+            # olmo_core reads them as a flat memmap of `dtype` (uint32 in every
+            # dataset spec here), so do the same.
+            a = np.memmap(p, dtype=np.dtype(dtype), mode="r")
             if a.shape[0] < seq_len + 1:
                 # A short shard would yield a truncated row and break np.stack.
                 # Skip it loudly rather than corrupting the batch silently.
@@ -235,6 +240,8 @@ def main():
     ap.add_argument("--warmup-steps", type=int, default=20)
     ap.add_argument("--max-grad-norm", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=64)
+    ap.add_argument("--token-dtype", default="uint32",
+                    help="on-disk token width; matches the dataset specs")
     args = ap.parse_args()
 
     if args.ewc_lambda > 0 and not args.fisher_paths:
@@ -274,7 +281,7 @@ def main():
         # Its own RNG and its own iterator, so the Fisher pass does not advance
         # the training stream.
         fisher_sampler = WindowSampler(args.fisher_paths, args.sequence_length,
-                                       args.seed)
+                                       args.seed, args.token_dtype)
         fisher = estimate_fisher(model, fisher_sampler, args.fisher_batches,
                                  args.micro_batch_size, device)
         flat = torch.cat([f.reshape(-1) for f in fisher.values()])
@@ -285,7 +292,7 @@ def main():
               flush=True)
 
     train_sampler = WindowSampler(args.train_paths, args.sequence_length,
-                                  args.seed + 1)
+                                  args.seed + 1, args.token_dtype)
     optim = build_optimizer(model, args)
     # Apply the schedule as a MULTIPLIER on each group's base LR, so Muon's
     # matrix LR and its AdamW-component LR keep their relative scale instead of
