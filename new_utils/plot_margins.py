@@ -60,13 +60,19 @@ def plot_panels(data, out):
             chins = sorted(c for c in data[size] if opt in data[size][c])
             if not chins:
                 continue
+            mean = [data[size][c][opt]["h_over_kappa_mean"] for c in chins]
             med = [data[size][c][opt]["h_over_kappa_median"] for c in chins]
             lo = [data[size][c][opt]["h_over_kappa_p10"] for c in chins]
             hi = [data[size][c][opt]["h_over_kappa_p90"] for c in chins]
             ax.fill_between(chins, lo, hi, color=COLOR[opt], alpha=0.13,
                             linewidth=0, zorder=1)
-            ax.plot(chins, med, "o-", color=COLOR[opt], linewidth=1.8,
-                    markersize=5, label=opt, zorder=3)
+            # Mean and median both shown: h/kappa is right-skewed (see the
+            # histograms), so the mean sits above the median and the two can
+            # in principle order the optimizers differently.
+            ax.plot(chins, mean, "o-", color=COLOR[opt], linewidth=1.8,
+                    markersize=5, label=f"{opt} mean", zorder=3)
+            ax.plot(chins, med, "--", color=COLOR[opt], linewidth=1.3,
+                    alpha=0.85, label=f"{opt} median", zorder=2)
         ax.set_xscale("log")
         # A narrow chinchilla span (300M, 600M) leaves the log minor ticks
         # (2x, 3x, 4x, 6x) close enough to collide into unreadable mush.
@@ -78,9 +84,9 @@ def plot_panels(data, out):
         ax.grid(True, alpha=0.22, linewidth=0.6)
         ax.tick_params(labelsize=8, colors=MUTED)
         if i == 0:
-            ax.set_ylabel(r"$h/\kappa$   (median, p10–p90)", fontsize=10, color=INK)
+            ax.set_ylabel(r"$h/\kappa$   (mean, median, p10–p90)", fontsize=10, color=INK)
     h, l = axes[0][0].get_legend_handles_labels()
-    fig.legend(h, l, loc="lower center", ncol=2, frameon=False, fontsize=10,
+    fig.legend(h, l, loc="lower center", ncol=4, frameon=False, fontsize=9.5,
                bbox_to_anchor=(0.5, -0.02))
     fig.suptitle(r"Critical-noise ratio $h/\kappa$ on held-out DCLM   —   "
                  r"higher = larger $\sigma^*$ = more robust",
