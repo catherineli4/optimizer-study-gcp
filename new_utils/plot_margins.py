@@ -140,11 +140,12 @@ def plot_delta(data, out):
     print(f"wrote {out}.png / .pdf")
 
 
-def plot_medians(data, out):
-    """Median only -- no mean, no spread band -- with the first crossover marked.
+def plot_stat(data, out, stat="median"):
+    """One statistic only -- no mean, no spread band -- with the first crossover marked.
 
-    Crossover = the lowest chinchilla at which adamw's median h/kappa exceeds
-    muon's. At 30M/60M/100M that switch is permanent; at 300M/600M it reverts at
+    `stat` is "median" or "mean". Crossover = the lowest chinchilla at which
+    adamw's h/kappa exceeds muon's on that statistic. The two agree on every
+    crossover (8, 2, 1, 1, 0.5), which is worth knowing given the right skew. At 30M/60M/100M that switch is permanent; at 300M/600M it reverts at
     a higher budget, so those are labelled "not sustained" rather than being
     presented as the same kind of event.
     """
@@ -157,12 +158,12 @@ def plot_medians(data, out):
                         if "adamw" in data[size][c] and "muon" in data[size][c])
         for opt in ("adamw", "muon"):
             chins = sorted(c for c in data[size] if opt in data[size][c])
-            med = [data[size][c][opt]["h_over_kappa_median"] for c in chins]
+            med = [data[size][c][opt][f"h_over_kappa_{stat}"] for c in chins]
             ax.plot(chins, med, "o-", color=COLOR[opt], linewidth=1.9,
                     markersize=5.5, label=opt, zorder=3)
 
-        flags = [data[size][c]["adamw"]["h_over_kappa_median"]
-                 > data[size][c]["muon"]["h_over_kappa_median"] for c in paired]
+        flags = [data[size][c]["adamw"][f"h_over_kappa_{stat}"]
+                 > data[size][c]["muon"][f"h_over_kappa_{stat}"] for c in paired]
         cross = next((c for c, f in zip(paired, flags) if f), None)
         if cross is not None:
             k = paired.index(cross)
@@ -189,12 +190,12 @@ def plot_medians(data, out):
         ax.grid(True, alpha=0.22, linewidth=0.6)
         ax.tick_params(labelsize=8, colors=MUTED)
         if i == 0:
-            ax.set_ylabel(r"median $h/\kappa$", fontsize=10.5, color=INK)
+            ax.set_ylabel(f"{stat} " + r"$h/\kappa$", fontsize=10.5, color=INK)
     h, l = axes[0][0].get_legend_handles_labels()
     fig.legend(h, l, loc="lower center", ncol=2, frameon=False, fontsize=10,
                bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle(r"Median $h/\kappa$ on held-out DCLM   —   dashed rule: first "
-                 r"chinchilla where adamw overtakes muon",
+    fig.suptitle(f"{stat.capitalize()} " + r"$h/\kappa$ on held-out DCLM   —   "
+                 r"dashed rule: first chinchilla where adamw overtakes muon",
                  fontsize=12.5, color=INK)
     fig.tight_layout(rect=(0, 0.05, 1, 0.94))
     for ext in ("png", "pdf"):
@@ -234,7 +235,8 @@ def main():
     os.makedirs(a.out_dir, exist_ok=True)
     plot_panels(data, os.path.join(a.out_dir, "margins-h-kappa"))
     plot_delta(data, os.path.join(a.out_dir, "margins-h-kappa-delta"))
-    plot_medians(data, os.path.join(a.out_dir, "margins-h-kappa-median"))
+    plot_stat(data, os.path.join(a.out_dir, "margins-h-kappa-median"), "median")
+    plot_stat(data, os.path.join(a.out_dir, "margins-h-kappa-meanonly"), "mean")
     write_csv(data, os.path.join(a.out_dir, "margins-h-kappa"))
 
 
