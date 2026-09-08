@@ -140,6 +140,69 @@ def plot_delta(data, out):
     print(f"wrote {out}.png / .pdf")
 
 
+def plot_medians(data, out):
+    """Median only -- no mean, no spread band -- with the first crossover marked.
+
+    Crossover = the lowest chinchilla at which adamw's median h/kappa exceeds
+    muon's. At 30M/60M/100M that switch is permanent; at 300M/600M it reverts at
+    a higher budget, so those are labelled "not sustained" rather than being
+    presented as the same kind of event.
+    """
+    sizes = [s for s in SIZES if s in data]
+    fig, axes = plt.subplots(1, len(sizes), figsize=(2.9 * len(sizes), 4.3),
+                             squeeze=False, sharey=True)
+    for i, size in enumerate(sizes):
+        ax = axes[0][i]
+        paired = sorted(c for c in data[size]
+                        if "adamw" in data[size][c] and "muon" in data[size][c])
+        for opt in ("adamw", "muon"):
+            chins = sorted(c for c in data[size] if opt in data[size][c])
+            med = [data[size][c][opt]["h_over_kappa_median"] for c in chins]
+            ax.plot(chins, med, "o-", color=COLOR[opt], linewidth=1.9,
+                    markersize=5.5, label=opt, zorder=3)
+
+        flags = [data[size][c]["adamw"]["h_over_kappa_median"]
+                 > data[size][c]["muon"]["h_over_kappa_median"] for c in paired]
+        cross = next((c for c, f in zip(paired, flags) if f), None)
+        if cross is not None:
+            k = paired.index(cross)
+            sustained = all(flags[k:])
+            ax.axvline(cross, color=INK, linewidth=1.2, linestyle=(0, (5, 3)),
+                       alpha=0.75, zorder=2)
+            txt = f"adamw ahead\nfrom c={cross:g}"
+            if not sustained:
+                txt += "\n(not sustained)"
+            ax.annotate(txt, xy=(cross, 0.97), xycoords=("data", "axes fraction"),
+                        xytext=(4, 0), textcoords="offset points",
+                        fontsize=8.5, color=INK, va="top", ha="left")
+        else:
+            ax.annotate("muon ahead throughout", xy=(0.5, 0.97),
+                        xycoords="axes fraction", fontsize=8.5,
+                        color=COLOR["muon"], va="top", ha="center")
+
+        ax.set_xscale("log")
+        ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+        ax.xaxis.set_major_locator(mticker.LogLocator(numticks=4))
+        ax.xaxis.set_major_formatter(mticker.LogFormatterSciNotation())
+        ax.set_title(f"{size}", fontsize=11, color=INK)
+        ax.set_xlabel("chinchilla", fontsize=9, color=MUTED)
+        ax.grid(True, alpha=0.22, linewidth=0.6)
+        ax.tick_params(labelsize=8, colors=MUTED)
+        if i == 0:
+            ax.set_ylabel(r"median $h/\kappa$", fontsize=10.5, color=INK)
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, loc="lower center", ncol=2, frameon=False, fontsize=10,
+               bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(r"Median $h/\kappa$ on held-out DCLM   —   dashed rule: first "
+                 r"chinchilla where adamw overtakes muon",
+                 fontsize=12.5, color=INK)
+    fig.tight_layout(rect=(0, 0.05, 1, 0.94))
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf")
+
+
 def write_csv(data, out):
     with open(f"{out}.csv", "w") as fh:
         fh.write("model_size,chinchilla,optimizer,h_over_kappa_mean,"
@@ -171,6 +234,7 @@ def main():
     os.makedirs(a.out_dir, exist_ok=True)
     plot_panels(data, os.path.join(a.out_dir, "margins-h-kappa"))
     plot_delta(data, os.path.join(a.out_dir, "margins-h-kappa-delta"))
+    plot_medians(data, os.path.join(a.out_dir, "margins-h-kappa-median"))
     write_csv(data, os.path.join(a.out_dir, "margins-h-kappa"))
 
 
