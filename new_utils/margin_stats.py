@@ -72,36 +72,52 @@ def build_model(config_path: str, checkpoint: str, device: torch.device):
 
 
 @torch.no_grad()
-def margin_stats(logits: torch.Tensor, gold: torch.Tensor):
-    """h, kappa, lambda for each position of one batch.
+def margin_stats(logits: torch.Tensor, gold: torch.Tensor, chunk_rows: int = 256):
+    """h, kappa, lambda, correct for each position of one batch.
 
     logits: (B, L, V) — any dtype, upcast internally.
     gold:   (B, L)    — the gold token id t at each position.
 
-    Returns three (B, L) float64 tensors. Everything is a reduction over the
-    vocabulary axis; the margin vector is never formed.
+    Everything is a reduction over the vocabulary axis; the margin vector is
+    never formed. The reductions run in float64 over CHUNKS of `chunk_rows`
+    positions: a full-batch upcast is (B*L*V*8) bytes -- 13 GiB for a 4x4096
+    batch at V=100352 -- and the two-pass variance needs several such copies,
+    which OOMs on the larger models. Chunking bounds that at
+    chunk_rows*V*8 (~200 MiB) regardless of batch or sequence length.
     """
-    z = logits.double()
-    V = z.shape[-1]
+    B, L, V = logits.shape
     n = V - 1                                    # competitors, j != t
+    flat = logits.reshape(-1, V)
+    g = gold.reshape(-1)
+    N = flat.shape[0]
 
-    z_t = z.gather(-1, gold.unsqueeze(-1)).squeeze(-1)          # (B, L)
+    h = torch.empty(N, dtype=torch.float64, device=logits.device)
+    kappa = torch.empty(N, dtype=torch.float64, device=logits.device)
+    lam = torch.empty(N, dtype=torch.float64, device=logits.device)
 
-    # mean over j != t: drop the gold entry from the full-vocab sum.
-    mean_excl = (z.sum(-1) - z_t) / n
-    h = z_t - mean_excl
+    for a in range(0, N, chunk_rows):
+        b = min(a + chunk_rows, N)
+        z = flat[a:b].double()
+        gi = g[a:b].unsqueeze(-1)
+        z_t = z.gather(-1, gi).squeeze(-1)
 
-    # kappa = sd_{j!=t} z_j. Two-pass about mean_excl rather than
-    # E[z^2] - E[z]^2: with |z| ~ 20 and V ~ 1e5 that difference cancels ~2
-    # significant digits, and kappa enters as a ratio.
-    dev = z - mean_excl.unsqueeze(-1)
-    ss_excl = dev.pow(2).sum(-1) - (z_t - mean_excl).pow(2)
-    kappa = (ss_excl / n).clamp_min(0).sqrt()
+        # mean over j != t: drop the gold entry from the full-vocab sum.
+        mean_excl = (z.sum(-1) - z_t) / n
+        h[a:b] = z_t - mean_excl
 
-    # lambda = z_t - max_{j != t} z_j. Mask the gold entry rather than taking a
-    # top-2, so ties at the gold logit are handled correctly.
-    z_masked = z.scatter(-1, gold.unsqueeze(-1), float("-inf"))
-    lam = z_t - z_masked.max(-1).values
+        # kappa = sd_{j!=t} z_j. Two-pass about mean_excl rather than
+        # E[z^2] - E[z]^2: with |z| ~ 20 and V ~ 1e5 that difference cancels
+        # ~2 significant digits, and kappa enters as a ratio.
+        z -= mean_excl.unsqueeze(-1)             # in place: no extra copy
+        ss_excl = z.pow(2).sum(-1) - (z_t - mean_excl).pow(2)
+        kappa[a:b] = (ss_excl / n).clamp_min(0).sqrt()
+
+        # lambda = z_t - max_{j != t} z_j. Mask the gold entry rather than
+        # taking a top-2, so ties at the gold logit are handled correctly.
+        # z is now centred, so add mean_excl back to recover the raw max.
+        z.scatter_(-1, gi, float("-inf"))
+        lam[a:b] = z_t - (z.max(-1).values + mean_excl)
+        del z
 
     # argmax-correctness is NOT the same as lambda > 0: a tie at the gold logit
     # gives lambda == 0 while argmax may still return t. Ties are common because
@@ -109,7 +125,7 @@ def margin_stats(logits: torch.Tensor, gold: torch.Tensor):
     # reported and the gap is the tie count.
     correct = logits.argmax(-1) == gold
 
-    return h, kappa, lam, correct
+    return h.view(B, L), kappa.view(B, L), lam.view(B, L), correct
 
 
 def main():
@@ -126,6 +142,8 @@ def main():
     ap.add_argument("--batch-size", type=int, default=4,
                     help="sequences per forward; memory only")
     ap.add_argument("--token-dtype", default="uint32")
+    ap.add_argument("--chunk-rows", type=int, default=256,
+                    help="positions per float64 reduction chunk; memory only")
     ap.add_argument("--offset", type=int, default=0,
                     help="token offset into the shard, for disjoint splits")
     ap.add_argument("--save-per-token", action="store_true",
@@ -153,7 +171,7 @@ def main():
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
             out = model(ids[:, :-1])
         logits = out.logits if hasattr(out, "logits") else out
-        h, k, lam, corr = margin_stats(logits, ids[:, 1:])
+        h, k, lam, corr = margin_stats(logits, ids[:, 1:], args.chunk_rows)
 
         hs.append(h.float().cpu().numpy())
         ks.append(k.float().cpu().numpy())
