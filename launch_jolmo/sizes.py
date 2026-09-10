@@ -33,13 +33,13 @@ PROFILES: Dict[str, Dict] = {
         # muon, chinchillas 1-16, measured from the completed sweeps).
         "project": "Optim-30M-tuning",
         "model_type": "0.03B",
-        "chinchillas": [1, 2, 4, 8, 16],
+        "chinchillas": [0.25, 0.5, 1,2, 4, 8, 16, 32, 64],
         "num_processes": 2,
     },
     "60M": {
         "project": "Optim-60M-tuning",
         "model_type": "0.06B",
-        "chinchillas": [0.25, 0.5, 1, 2, 4, 8],   # trimmed from [1..128] for the chin-1-8 CPT pass
+        "chinchillas": [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128],   # trimmed from [1..128] for the chin-1-8 CPT pass
         "num_processes": 8,
     },
     "100M": {
@@ -47,7 +47,7 @@ PROFILES: Dict[str, Dict] = {
         # (new_utils/import_100m_models.py); chin 1–4 are earlier imports.
         "project": "Optim-100M-tuning",
         "model_type": "0.1B",
-        "chinchillas": [1, 2, 4, 8, 16, 32],
+        "chinchillas": [0.25, 0.5, 1, 2, 4, 8, 16, 32],
         "num_processes": 2,
     },
     "300M": {
@@ -55,7 +55,7 @@ PROFILES: Dict[str, Dict] = {
         # PT_LR_SWEEP until a table is filled in under PT_LR_BY_MODEL["0.3B"].
         "project": "Optim-300M-tuning",
         "model_type": "0.3B",
-        "chinchillas": [0.25, 0.5, 1,2,4, 8],
+        "chinchillas": [0.25, 0.5, 1,2,4,8],
         "num_processes": 8,
     },
     "600M": {
@@ -63,7 +63,7 @@ PROFILES: Dict[str, Dict] = {
         # PT_LR_SWEEP until the PT_LR_BY_MODEL["0.6B"] slots are filled in.
         "project": "Optim-600M-tuning",
         "model_type": "0.6B",
-        "chinchillas": [0.25, 0.5, 1],
+        "chinchillas": [0.25, 0.5, 1, 2],
         "num_processes": 8,
     },
 }
