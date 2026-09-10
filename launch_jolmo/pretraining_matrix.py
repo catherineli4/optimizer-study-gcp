@@ -1112,9 +1112,11 @@ perturb_wide_evals = build_perturbed_model_evaluations(
 # each (chinchilla x optimizer) cell -- the same base set the perturbation and
 # replay sweeps use. $OPTIM_EWC_CHINCHILLAS narrows it, e.g.
 # OPTIM_EWC_CHINCHILLAS=1,2,4,8, since the full ladder is a large job.
-EWC_DATASETS = ["gsm8k"]
+# Track cpt.py's active list rather than hardcoding, so EWC and plain CPT always
+# cover the same datasets and an edit there does not silently leave EWC behind.
+# $OPTIM_EWC_DATASETS narrows it -- the full list is 5x the single-dataset grid.
 
-from launch_jolmo.cpt import CPT_LR_SWEEP  # noqa: E402
+from launch_jolmo.cpt import CPT_DATASETS as _CPT_DATASETS, CPT_LR_SWEEP  # noqa: E402
 from launch_jolmo.ewc import EWC_LAMBDAS, build_ewc_models  # noqa: E402
 from launch_jolmo.ft_sweep import REPLAY_DCLM_CHUNK as _EWC_FISHER_CHUNK  # noqa: E402
 
@@ -1132,6 +1134,17 @@ if _ewc_want:
             f"{[f'{c:g}' for c in sorted(_ewc_missing)]}, which {MODEL_TYPE} has "
             f"no tuned LR for; available: {[f'{c:g}' for c in EWC_CHINCHILLAS]}")
     EWC_CHINCHILLAS = [c for c in EWC_CHINCHILLAS if c in _ewc_keep]
+
+EWC_DATASETS = list(_CPT_DATASETS)
+_ewc_ds = os.environ.get("OPTIM_EWC_DATASETS", "").strip()
+if _ewc_ds:
+    _keep_ds = [d.strip() for d in _ewc_ds.replace(",", " ").split()]
+    _bad_ds = [d for d in _keep_ds if d not in _CPT_DATASETS]
+    if _bad_ds:
+        raise ValueError(
+            f"OPTIM_EWC_DATASETS asks for {_bad_ds}, which cpt.py does not have "
+            f"active; available: {list(_CPT_DATASETS)}")
+    EWC_DATASETS = _keep_ds
 
 ewc_bases = tuned_bases_for(EWC_CHINCHILLAS)
 ewc_models = build_ewc_models(
