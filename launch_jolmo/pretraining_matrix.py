@@ -1122,8 +1122,10 @@ from launch_jolmo.ft_sweep import REPLAY_DCLM_CHUNK as _EWC_FISHER_CHUNK  # noqa
 
 dclm_replay_chunks: Tuple[Chunk, ...] = (_EWC_FISHER_CHUNK,)
 
-_ewc_wsd = PT_LR.get("wsd", {})
-EWC_CHINCHILLAS = sorted(set(_ewc_wsd.get("adamw", {})) | set(_ewc_wsd.get("muon", {})))
+# The profile's own chinchilla list (launch_jolmo/sizes.py), NOT every budget
+# that happens to have a tuned LR: sizes.py is where the active set is curated
+# per size, and reading PT_LR instead silently re-widened the sweep.
+EWC_CHINCHILLAS = list(CHINCHILLAS)
 _ewc_want = os.environ.get("OPTIM_EWC_CHINCHILLAS", "").strip()
 if _ewc_want:
     _ewc_keep = {float(x) for x in _ewc_want.replace(",", " ").split()}
