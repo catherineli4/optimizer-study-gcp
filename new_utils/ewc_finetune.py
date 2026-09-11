@@ -249,7 +249,17 @@ def main():
             "ewc_lambda > 0 requires --fisher-paths (the pretraining shards the "
             "diagonal Fisher is estimated on)")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Never fall back to CPU. FlashAttention has no CPU kernel, so a CPU run
+    # dies ~minutes later in flash_attn with an error that hides the real
+    # cause -- which is what a transient "CUDA driver initialization failed"
+    # looked like in the 60M sweep. Fail immediately and say why instead.
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is not available to this task (driver init failed or no GPU "
+            f"visible; CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')!r}). "
+            "EWC needs a GPU: FlashAttention has no CPU kernel. Rerun the stage; "
+            "the exists-check will retry only this task.")
+    device = torch.device("cuda")
     torch.manual_seed(args.seed)
 
     seqs_per_step = args.global_batch_size // args.sequence_length
