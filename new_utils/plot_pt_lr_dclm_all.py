@@ -360,7 +360,8 @@ def plot_best_combined(all_summary, out, annotate=True):
     ax.set_xlabel("chinchilla multiplier (token budget)", fontsize=11, color=INK)
     ax.set_ylabel(f"best {LABEL} loss", fontsize=11, color=INK)
     ax.set_title("Best-LR held-out DCLM loss vs token budget, all model sizes\n"
-                 "(wd 0.1, batch 1M; annotation = the winning LR)",
+                 "(wd 0.1, batch 1M" + ("; annotation = the winning LR)" if annotate
+                                        else ")"),
                  fontsize=13, color=INK)
     ax.grid(True, alpha=0.25, linewidth=0.6)
     ax.tick_params(labelsize=9, colors=MUTED)
@@ -487,7 +488,8 @@ def main():
             all_table[size] = ts
     plot_best(all_summary, os.path.join(a.out_dir, "pt-lr-dclm-best-all-sizes"))
     plot_best_combined(all_summary,
-                       os.path.join(a.out_dir, "pt-lr-dclm-best-combined"))
+                       os.path.join(a.out_dir, "pt-lr-dclm-best-combined"),
+                       annotate=False)
     plot_best_panels(all_summary,
                      os.path.join(a.out_dir, "pt-lr-dclm-best-panels"))
     plot_best(all_table,
