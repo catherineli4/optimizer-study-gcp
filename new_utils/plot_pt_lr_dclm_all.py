@@ -120,7 +120,7 @@ def sync(size, cache):
     d = os.path.join(cache, size)
     os.makedirs(d, exist_ok=True)
     subprocess.run(
-        ["gsutil", "-m", "rsync", "-x", r".*-CPT-.*|.*_perturbed_.*|.*-typo-.*",
+        ["gsutil", "-m", "rsync", "-x", r".*-CPT-.*|.*-EWC-.*|.*_perturbed_.*|.*-typo-.*",
          f"{BUCKET}/Optim-{size}-tuning/ModelEvaluation/", d],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return d
@@ -382,6 +382,62 @@ def plot_best_combined(all_summary, out, annotate=True):
     print(f"wrote {out}.png / .pdf")
 
 
+def plot_best_panels(all_summary, out):
+    """Best-LR loss vs budget, ONE subplot per model size.
+
+    Within a panel the only varying dimension is the optimizer, so it takes the
+    validated adamw/muon hues (plus the dashed/solid + square/circle composite,
+    so identity never rests on colour alone) instead of the per-size colours
+    the single-axes version needs. y is NOT shared: loss scales differ ~1 nat
+    between 30M and 600M, and a shared axis would flatten the small sizes' gap.
+    """
+    sizes = [s for s in SIZE_COLOR if s in all_summary]
+    if not sizes:
+        return
+    color = {"adamw": COLOR["adamw"], "muon": COLOR["muon"]}
+    style = {"adamw": dict(linestyle="--", marker="s", markersize=5),
+             "muon": dict(linestyle="-", marker="o", markersize=6)}
+    fig, axes = plt.subplots(1, len(sizes), figsize=(3.4 * len(sizes), 4.2),
+                             squeeze=False)
+    for i, size in enumerate(sizes):
+        ax = axes[0][i]
+        chins_all = set()
+        for opt in ("adamw", "muon"):
+            pts = sorted(all_summary[size].get(opt, {}).items())
+            if not pts:
+                continue
+            xs = [c for c, _ in pts]
+            ys = [v for _, (_, v) in pts]
+            chins_all.update(xs)
+            ax.plot(xs, ys, color=color[opt], linewidth=1.8, label=opt,
+                    zorder=3, **style[opt])
+            # adamw labels above-left, muon below-right: the two optima often
+            # sit at nearly the same loss, so stacking would overlap them.
+        ax.set_xscale("log")
+        ticks = sorted(chins_all)
+        ax.set_xticks(ticks)
+        ax.set_xticklabels([f"{c:g}" for c in ticks], fontsize=7.5,
+                           rotation=45 if len(ticks) > 6 else 0)
+        ax.minorticks_off()
+        ax.set_title(size, fontsize=11.5, color=INK)
+        ax.set_xlabel("chinchilla", fontsize=9, color=MUTED)
+        if i == 0:
+            ax.set_ylabel(f"best {LABEL} loss", fontsize=10, color=INK)
+        ax.grid(True, alpha=0.25, linewidth=0.6)
+        ax.tick_params(axis="y", labelsize=8, colors=MUTED)
+        ax.margins(x=0.08, y=0.08)
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, loc="lower center", ncol=2, frameon=False, fontsize=10,
+               bbox_to_anchor=(0.5, -0.03))
+    fig.suptitle("Best-LR held-out DCLM loss vs token budget  (wd 0.1, batch 1M)",
+                 fontsize=13, color=INK)
+    fig.tight_layout(rect=(0, 0.05, 1, 0.94))
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf")
+
+
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
@@ -432,6 +488,8 @@ def main():
     plot_best(all_summary, os.path.join(a.out_dir, "pt-lr-dclm-best-all-sizes"))
     plot_best_combined(all_summary,
                        os.path.join(a.out_dir, "pt-lr-dclm-best-combined"))
+    plot_best_panels(all_summary,
+                     os.path.join(a.out_dir, "pt-lr-dclm-best-panels"))
     plot_best(all_table,
               os.path.join(a.out_dir, "pt-lr-dclm-best-all-sizes-table"),
               title="Held-out DCLM loss at the PT_LR_BY_MODEL table's LRs "
