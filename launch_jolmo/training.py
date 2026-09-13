@@ -967,7 +967,8 @@ class JolmoModel(Artifact):
         self._postprocess(builder, save_folder, output_dir)
 
     def _postprocess(self, builder: Task, save_folder: str, output_dir: str,
-                     olmo_upload_relpath: Optional[str] = None):
+                     olmo_upload_relpath: Optional[str] = None,
+                     drop_optim: bool = False):
         """Unshard the final checkpoint, convert to HF format, and upload.
 
         olmo_upload_relpath: GCS relpath for the unsharded upload.  Defaults to
@@ -1009,6 +1010,14 @@ class JolmoModel(Artifact):
         if self.upload:
             # Upload unsharded OLMo checkpoint
             if self.unshard_checkpoint:
+                if drop_optim:
+                    # optim.pt is ~2/3 of the unsharded checkpoint (100 of
+                    # 151 MiB at 30M) and is dead weight for a finetune that is
+                    # only ever loaded for inference: nothing resumes training
+                    # from a CPT run. Removing it before the rsync roughly
+                    # halves the upload phase of every task.
+                    builder.run_command(
+                        f'rm -f -- "{os.path.join(unsharded_dir, "optim.pt")}"')
                 _upload_to_gs_with_retry(
                     builder,
                     unsharded_dir,
@@ -1173,6 +1182,12 @@ class CPTModel(Artifact):
     scheduler: Literal["cosine", "constant", "inv_sqrt", "wsd"] = "cosine"
     max_grad_norm: float = 1.0
 
+    # torch.compile is OFF for CPT by default, unlike pretraining. A CPT run is
+    # ~305 steps, and compile warmup costs more than it saves at that length:
+    # the trainer phase of a 30M finetune was ~83s of a 120s task. Pretraining
+    # runs are orders of magnitude longer and keep compile on.
+    compile_model: bool = False
+
     # Infrastructure
     num_processes: int = 1
     save_interval: Optional[int] = None
@@ -1292,7 +1307,7 @@ class CPTModel(Artifact):
             muon_weight_decay=self.muon_weight_decay,
             scheduler=self.scheduler,
             max_grad_norm=self.max_grad_norm,
-            compile_model=self.pretrained_model.compile_model,
+            compile_model=self.compile_model,
             parallelism=self.pretrained_model.parallelism,
             dp_param_dtype=self.pretrained_model.dp_param_dtype,
             dp_reduce_dtype=self.pretrained_model.dp_reduce_dtype,
@@ -1358,7 +1373,8 @@ class CPTModel(Artifact):
             f"--nproc_per_node={self.num_processes} {launch_script} {config_path}"
         )
         pseudo._postprocess(builder, save_folder, output_dir,
-                            olmo_upload_relpath=self.olmo_model_relpath)
+                            olmo_upload_relpath=self.olmo_model_relpath,
+                            drop_optim=True)
 
 
 # ---------------------------------------------------------------------------
