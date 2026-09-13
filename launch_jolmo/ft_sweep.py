@@ -581,3 +581,40 @@ if _WANT_FT:
 
 BS_BEST_XSIZE_SWEEPS: Tuple[FtSweep, ...] = tuple(_bs_best_x_sweeps)
 
+# ---------------------------------------------------------------------------
+# Plain FT on the tuned (best-LR) base of every chinchilla in the SIZE PROFILE
+# (launch_jolmo/sizes.py), at every size. No replay -- replay_fractions defaults
+# to (0.0,), so these carry the plain CPT run names and dedupe against any
+# earlier ft- pass at the same LR.
+#
+# The LR grid comes straight from cpt.py's CPT_LR_SWEEP via FtSweep._lr_entries,
+# so widening that list widens this sweep with no edit here.
+# $OPTIM_FT_CHINCHILLAS narrows the budgets.
+# ---------------------------------------------------------------------------
+
+_tuned_sweeps = []
+if _WANT_FT:
+    from launch_jolmo.sizes import active_profile as _ap_t
+    from launch_jolmo.pretraining_matrix import (
+        tuned_bases_for as _tuned_bases_t, CHINCHILLAS as _CHINS_T)
+    _sz_t, _ = _ap_t()
+    _chins_t = list(_CHINS_T)
+    _want_t = _os.environ.get("OPTIM_FT_CHINCHILLAS", "").strip()
+    if _want_t:
+        _keep_t = {float(x) for x in _want_t.replace(",", " ").split()}
+        _missing_t = _keep_t - set(_chins_t)
+        if _missing_t:
+            raise ValueError(
+                f"OPTIM_FT_CHINCHILLAS asks for "
+                f"{[f'{c:g}' for c in sorted(_missing_t)]}, which the {_sz_t} "
+                f"profile does not list; available: "
+                f"{[f'{c:g}' for c in _chins_t]}")
+        _chins_t = [c for c in _chins_t if c in _keep_t]
+    for _b in _tuned_bases_t(_chins_t):
+        _tuned_sweeps.append(FtSweep(base=_b, label_suffix="-tuned"))
+    print(f"[ft-tuned] {_sz_t}: {len(_tuned_sweeps)} tuned base(s) over "
+          f"chinchillas {[f'{c:g}' for c in _chins_t]}")
+
+TUNED_SWEEPS: Tuple[FtSweep, ...] = tuple(_tuned_sweeps)
+
+

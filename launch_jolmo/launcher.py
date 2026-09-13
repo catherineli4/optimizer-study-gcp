@@ -324,6 +324,7 @@ from launch_jolmo.ft_sweep import BS_BEST_SWEEPS as FT_BSBEST_SWEEPS
 from launch_jolmo.ft_sweep import ALLCHIN_SWEEPS as FT_ALLCHIN_SWEEPS
 from launch_jolmo.ft_sweep import REPLAY_SWEEPS as FT_REPLAY_SWEEPS
 from launch_jolmo.ft_sweep import BS_BEST_XSIZE_SWEEPS
+from launch_jolmo.ft_sweep import TUNED_SWEEPS as FT_TUNED_SWEEPS
 for _sweep in FT_SWEEPS:
     executor.stage(_sweep.label, _sweep.models())
     executor.stage(f"{_sweep.label}-evals", _sweep.evals())
@@ -588,6 +589,18 @@ executor.stage("ewc-bases",  ewc_bases)
 executor.stage("ewc-runs",   ewc_models)
 executor.stage_group("ewc",  ("ewc-bases", "ewc-runs"))
 executor.stage("ewc-evals",  ewc_evals)
+
+# --- Plain FT on the tuned base of every chinchilla in the size profile ---
+for _sweep in FT_TUNED_SWEEPS:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+if FT_TUNED_SWEEPS:
+    # Bases INSIDE the group: dependencies resolve by object identity.
+    executor.stage("ft-tuned-bases", [_s.base for _s in FT_TUNED_SWEEPS])
+    executor.stage_group("ft-tuned", ("ft-tuned-bases",)
+                         + tuple(_s.label for _s in FT_TUNED_SWEEPS))
+    executor.stage_group("ft-tuned-evals",
+                         tuple(f"{_s.label}-evals" for _s in FT_TUNED_SWEEPS))
 
 if __name__ == "__main__":
     executor.auto_cli()
