@@ -360,6 +360,118 @@ def plot_curves(raw, out, degradation=False):
     print(f"wrote {out}.png / .pdf")
 
 
+
+# Parameter counts behind the size labels, so the x axis is a real quantity on a
+# log scale rather than five evenly spaced categories -- 30M to 600M is a 20x
+# span and even spacing would misstate every slope.
+SIZE_PARAMS = {"30M": 0.03e9, "60M": 0.06e9, "100M": 0.1e9,
+               "300M": 0.3e9, "600M": 0.6e9}
+
+
+def plot_curves_vs_size(raw, out, degradation=False, min_sizes=2):
+    """Rows = chinchilla, columns = optimizer; x = model size, one line per sigma.
+
+    The transpose of plot_curves: that one fixes the size per row and sweeps the
+    token budget, answering "does a longer-trained model perturb worse". Fixing
+    the budget per row and sweeping size instead asks whether the same holds as
+    models grow at equal budget -- which is the axis the scaling claim is about
+    and the one the by-size layout cannot show.
+
+    Rows with fewer than ``min_sizes`` sizes are dropped: a single point is not
+    a trend, and the budget grid is ragged (c=128 exists at 60M alone, c=64 at
+    30M/60M only).
+    """
+    ramp = plt.cm.Blues(np.linspace(0.35, 1.0, len(GAMMAS)))
+
+    chins = sorted({k[2] for k in raw})
+    rows = []
+    for chin in chins:
+        sizes = [s for s in SIZES
+                 if any(k[1] == s and k[2] == chin and k[0] is not None
+                        for k in raw)]
+        if len(sizes) < min_sizes:
+            print(f"c={chin:g}: only {len(sizes)} size(s), skipping row")
+            continue
+        rows.append(chin)
+    if not rows:
+        print("nothing to plot")
+        return
+
+    fig, axes = plt.subplots(len(rows), 2, figsize=(10.5, 2.9 * len(rows)),
+                             squeeze=False, sharex=True)
+    for r, chin in enumerate(rows):
+        # A shared y-range per row keeps adamw and muon directly comparable,
+        # exactly as in plot_curves.
+        row_vals = []
+        for opt in ("adamw", "muon"):
+            for k, v in raw.items():
+                if k[0] is None or k[2] != chin or k[3] != opt:
+                    continue
+                base = raw.get((None, k[1], chin, opt))
+                if degradation and base is None:
+                    continue
+                row_vals.append(v - base if degradation else v)
+
+        for c, opt in enumerate(("adamw", "muon")):
+            ax = axes[r][c]
+            for gi, g in enumerate(GAMMAS):
+                pts = []
+                for k, v in raw.items():
+                    if k[0] != g or k[2] != chin or k[3] != opt:
+                        continue
+                    base = raw.get((None, k[1], chin, opt))
+                    if degradation:
+                        if base is None:
+                            continue
+                        pts.append((SIZE_PARAMS[k[1]], v - base))
+                    else:
+                        pts.append((SIZE_PARAMS[k[1]], v))
+                pts.sort()
+                if pts:
+                    ax.plot([p[0] for p in pts], [p[1] for p in pts], "o-",
+                            color=ramp[gi], markersize=4.5, linewidth=1.7,
+                            label=f"$\\gamma$={g:g}", zorder=3)
+            if not degradation:
+                base_pts = sorted((SIZE_PARAMS[k[1]], v) for k, v in raw.items()
+                                  if k[0] is None and k[2] == chin and k[3] == opt)
+                if base_pts:
+                    ax.plot([p[0] for p in base_pts], [p[1] for p in base_pts],
+                            "--", color=MUTED, linewidth=1.3, zorder=2,
+                            label="unperturbed")
+            ax.set_xscale("log")
+            # Tick only the five real sizes; the log locator would otherwise put
+            # decade ticks at 1e8, where no model exists.
+            ax.set_xticks([SIZE_PARAMS[s] for s in SIZES])
+            ax.set_xticklabels(SIZES, fontsize=8)
+            ax.minorticks_off()
+            ax.set_title(f"chinchilla {chin:g} — {opt}", fontsize=10.5, color=INK)
+            ax.grid(True, alpha=0.25, linewidth=0.6)
+            ax.tick_params(labelsize=8, colors=MUTED)
+            if row_vals:
+                lo, hi = min(row_vals), max(row_vals)
+                pad = 0.06 * (hi - lo) if hi > lo else 0.1
+                ax.set_ylim(lo - pad, hi + pad)
+            if r == len(rows) - 1:
+                ax.set_xlabel("model size (parameters)", fontsize=9.5,
+                              color=MUTED)
+            if c == 0:
+                ax.set_ylabel("degradation (nats)" if degradation
+                              else f"{LABEL} loss", fontsize=9.5, color=INK)
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, loc="lower center", ncol=len(h), frameon=False,
+               fontsize=9.5, bbox_to_anchor=(0.5, -0.012))
+    fig.suptitle(
+        ("Loss degradation from Gaussian weight perturbation "
+         "(perturbed - unperturbed), by model size") if degradation else
+        "Post-perturbation held-out DCLM loss, by model size",
+        fontsize=13.5, color=INK)
+    fig.tight_layout(rect=(0, 0.012, 1, 0.985))
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf")
+
+
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
@@ -404,6 +516,10 @@ def main():
     plot_curves(raw, os.path.join(a.out_dir, "perturb-loss-vs-chinchilla"))
     plot_curves(raw, os.path.join(a.out_dir, "perturb-degradation-vs-chinchilla"),
                 degradation=True)
+
+    plot_curves_vs_size(raw, os.path.join(a.out_dir, "perturb-loss-vs-size"))
+    plot_curves_vs_size(raw, os.path.join(a.out_dir, "perturb-degradation-vs-size"),
+                        degradation=True)
 
 
 if __name__ == "__main__":
