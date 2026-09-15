@@ -367,6 +367,11 @@ class MaxEigenvalueSharpnessEvaluator(SharpnessEvaluator):
     ):
         super().__init__(dataset, batch_size, max_length)
         self.transform = transform
+        # Krylov depth for lambda_max. 40 is far past convergence for a single
+        # extremal eigenvalue and bounds the host-side basis at steps x dim
+        # float32 (96 GB at 0.6B, against ~1.8 TB of RAM).
+        self.lanczos_steps_maxeig = 40
+        self.lanczos_seed = 1234
 
     def evaluate(self, model, tokenizer) -> dict:
         if getattr(self.dataset, "dataset_type", "cpt") not in ("cpt", "sft"):
@@ -426,30 +431,81 @@ class MaxEigenvalueSharpnessEvaluator(SharpnessEvaluator):
         return hvp
 
     def _lanczos_symmetric(self, matrix_vector, dim: int, neigs: int):
+        """Top ``neigs`` eigenvalues of a symmetric operator.
+
+        ARPACK (``eigsh``) is not usable at this scale. Its Fortran core indexes
+        workspace with 32-bit integers, and scipy's default ``maxiter = 10 * n``
+        overflows once ``n`` passes ~2.1e8: at 0.3B params it raised
+
+            ArpackError -4: The maximum number of Arnoldi update iterations
+            allowed must be greater than zero
+
+        and at 0.6B the workspace arithmetic wrapped and segfaulted the process
+        outright (exit 139) after the HVPs had already completed.
+
+        So run Lanczos here instead, reusing ``lanczos_tridiagonal`` -- the same
+        fully-reorthogonalized, host-backed recurrence the SLQ path uses -- and
+        diagonalize the small tridiagonal. The largest Ritz value converges to
+        lambda_max from below in a handful of steps, and no vector of length
+        ``dim`` ever reaches numpy.
+        """
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        steps = min(self.lanczos_steps_maxeig, dim)
 
-        def mv(vec: np.ndarray):
-            gpu_vec = torch.tensor(vec, dtype=torch.float, device=device)
-            return matrix_vector(gpu_vec).detach().cpu().numpy()
+        g = torch.Generator(device="cpu").manual_seed(self.lanczos_seed)
+        q0 = torch.randn(dim, generator=g, dtype=torch.float32)
 
-        operator = LinearOperator((dim, dim), matvec=mv, dtype=np.float64)
-        evals, evecs = eigsh(operator, neigs)
-        evals = torch.from_numpy(np.ascontiguousarray(evals[::-1]).copy()).float()
-        evecs = torch.from_numpy(np.ascontiguousarray(np.flip(evecs, -1)).copy()).float()
-        return evals, evecs
+        alphas, betas = lanczos_tridiagonal(
+            matrix_vector, dim, steps, q0, device=device, progress=True
+        )
+        ritz = eigh_tridiagonal(alphas, betas, eigvals_only=True)
+        top = np.sort(np.asarray(ritz, dtype=np.float64))[::-1][:neigs]
+        # Ritz vectors would cost steps x dim and no caller uses them.
+        return torch.from_numpy(np.ascontiguousarray(top).copy()).float(), None
 
     def _arnoldi_largest_real(self, matrix_vector, dim: int) -> float:
-        """Largest-real-part eigenvalue of a (possibly non-symmetric) operator."""
+        """Largest-real-part eigenvalue of a (possibly non-symmetric) operator.
+
+        The ``eigs`` counterpart of the ARPACK problem described in
+        ``_lanczos_symmetric``, so the Arnoldi recurrence is run explicitly with
+        the same host-backed basis layout: only three length-``dim`` vectors are
+        on the device at a time, the basis lives in host memory, and the
+        eigenvalue problem is solved on the small upper-Hessenberg matrix.
+        """
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        steps = min(self.lanczos_steps_maxeig, dim)
 
-        def mv(vec: np.ndarray):
-            gpu_vec = torch.tensor(vec, dtype=torch.float, device=device)
-            out = matrix_vector(gpu_vec).detach().cpu().numpy()
-            return np.asarray(out, dtype=np.float64).reshape(-1)
+        g = torch.Generator(device="cpu").manual_seed(self.lanczos_seed)
+        q = torch.randn(dim, generator=g, dtype=torch.float32)
+        q /= q.norm()
 
-        operator = LinearOperator((dim, dim), matvec=mv, dtype=np.float64)
-        vals, _ = eigs(operator, k=1, which="LR")
-        return float(np.real(vals[0]))
+        basis = torch.empty((steps, dim), dtype=torch.float32, device="cpu")
+        H = np.zeros((steps + 1, steps), dtype=np.float64)
+
+        k = steps
+        for j in tqdm(range(steps), desc="Arnoldi (precond max eig)", leave=False):
+            basis[j] = q
+            w = matrix_vector(q.to(device))
+            w_host = w.detach().to("cpu", dtype=torch.float32)
+            del w
+
+            # Modified Gram-Schmidt against the whole basis, twice: one pass
+            # loses orthogonality badly at this conditioning.
+            used = basis[: j + 1]
+            for _ in range(2):
+                proj = used @ w_host
+                w_host -= proj @ used
+                H[: j + 1, j] += proj.numpy().astype(np.float64)
+
+            h_next = float(w_host.norm())
+            H[j + 1, j] = h_next
+            if h_next <= 1e-10:          # invariant subspace: stop early
+                k = j + 1
+                break
+            q = w_host / h_next
+
+        vals = np.linalg.eigvals(H[:k, :k])
+        return float(np.real(vals).max())
 
 
 class SumEigenvaluesSharpnessEvaluator(SharpnessEvaluator):
