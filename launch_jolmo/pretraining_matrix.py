@@ -1750,6 +1750,54 @@ maxeig_muon_evals = _maxeig_evals(pretrain_muon_wsd)
 maxeig_all_evals = maxeig_adamw_evals + maxeig_muon_evals
 
 
+# --- Same, but only the tuned (best-LR) base of each chinchilla x optimizer ---
+# _maxeig_evals above spans the whole LR sweep; this is the base set the CPT,
+# replay, EWC and h/kappa sweeps all use, so lambda_max lines up row-for-row
+# with those results instead of being a much larger, differently-indexed grid.
+# Reads the profile's own chinchilla list, like EWC_CHINCHILLAS, so a size is
+# curated in sizes.py rather than widened by whatever has a tuned LR.
+MAXEIG_CHINCHILLAS = list(CHINCHILLAS)
+_maxeig_want = os.environ.get("OPTIM_MAXEIG_CHINCHILLAS", "").strip()
+if _maxeig_want:
+    _me_keep = {float(x) for x in _maxeig_want.replace(",", " ").split()}
+    _me_missing = _me_keep - set(MAXEIG_CHINCHILLAS)
+    if _me_missing:
+        raise ValueError(
+            f"OPTIM_MAXEIG_CHINCHILLAS asks for "
+            f"{[f'{c:g}' for c in sorted(_me_missing)]}, which {MODEL_TYPE} does "
+            f"not have active; available: "
+            f"{[f'{c:g}' for c in MAXEIG_CHINCHILLAS]}")
+    MAXEIG_CHINCHILLAS = [c for c in MAXEIG_CHINCHILLAS if c in _me_keep]
+
+# Every step*/final checkpoint is the default, matching _maxeig_evals. That is
+# a large multiplier on an already slow Hessian job, so OPTIM_MAXEIG_FINAL_ONLY=1
+# restricts it to the end-of-training weights.
+_maxeig_final_only = os.environ.get("OPTIM_MAXEIG_FINAL_ONLY", "").strip() not in ("", "0")
+
+
+def _maxeig_tuned_evals() -> ArtifactSet:
+    arts = []
+    for m in tuned_bases_for(MAXEIG_CHINCHILLAS):
+        if _maxeig_final_only:
+            ckpts = ["final"]
+        else:
+            ckpts = list_training_checkpoints(m.relpath, skip_step0=True) or ["final"]
+        print(f"[maxeig-tuned] {m.run_name}: {len(ckpts)} checkpoint(s)")
+        for ckpt in ckpts:
+            arts.append(
+                SharpnessEvaluation(
+                    model=m,
+                    eval_dataset="pretrain",
+                    metrics="max_eigenvalue",
+                    checkpoint=ckpt,
+                )
+            )
+    return ArtifactSet(arts)
+
+
+maxeig_tuned_evals = _maxeig_tuned_evals()
+
+
 # --- Hessian spectral density via stochastic Lanczos quadrature -------------
 # m × n_v HVPs per model (~1k at the defaults). Raw Ritz nodes/weights land in
 # the artifact; new_utils.hessian_spectrum derives the statistics offline.

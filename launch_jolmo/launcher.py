@@ -121,6 +121,7 @@ from launch_jolmo.pretraining_matrix import (
     maxeig_adamw_evals,
     maxeig_muon_evals,
     maxeig_all_evals,
+    maxeig_tuned_evals,
     spectrum_adamw_evals,
     spectrum_muon_evals,
     spectrum_all_evals,
@@ -557,6 +558,7 @@ executor.stage("forgetting-sharpness", forgetting_sharpness_evals)
 executor.stage("maxeig-adamw",      maxeig_adamw_evals)
 executor.stage("maxeig-muon",       maxeig_muon_evals)
 executor.stage("maxeig-all",        maxeig_all_evals)
+executor.stage("maxeig-tuned",      maxeig_tuned_evals)
 
 # --- Hessian spectral density (stochastic Lanczos quadrature) ---
 executor.stage("spectrum-adamw",    spectrum_adamw_evals)
