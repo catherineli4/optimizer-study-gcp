@@ -1779,6 +1779,17 @@ _maxeig_final_only = os.environ.get("OPTIM_MAXEIG_FINAL_ONLY", "").strip() not i
 # registered in the same stage group: the executor resolves dependencies by
 # object identity, so a second tuned_bases_for() call would build equal-but-
 # distinct models and every eval would fail "not in the artifact set".
+# 300M/600M OOM'd on an 80 GiB H100 inside _compute_hvp's double backward
+# (create_graph=True keeps the whole forward graph alive while the second
+# autograd.grad runs). This is NOT fixable with more GPUs: evaluate_sharpness.py
+# is a single process with no model sharding -- gres stays gpu:1 and extra
+# devices would sit idle. Peak memory is per-batch because _compute_hvp loops
+# over batches and accumulates, so shrinking batch_size is the lever. The
+# estimator is unchanged: max_chunks=50 chunks are still all scored, and
+# n = len(batch) * len(batches) renormalises accordingly -- only the number of
+# HVP passes goes up.
+MAXEIG_BATCH_SIZE = {"0.3B": 1, "0.6B": 1}   # others keep the default 4
+
 maxeig_tuned_bases = tuned_bases_for(MAXEIG_CHINCHILLAS)
 
 
@@ -1789,7 +1800,9 @@ def _maxeig_tuned_evals() -> ArtifactSet:
             ckpts = ["final"]
         else:
             ckpts = list_training_checkpoints(m.relpath, skip_step0=True) or ["final"]
-        print(f"[maxeig-tuned] {m.run_name}: {len(ckpts)} checkpoint(s)")
+        bs = MAXEIG_BATCH_SIZE.get(m.model_type, 4)
+        print(f"[maxeig-tuned] {m.run_name}: {len(ckpts)} checkpoint(s), "
+              f"batch_size={bs}")
         for ckpt in ckpts:
             arts.append(
                 SharpnessEvaluation(
@@ -1797,6 +1810,7 @@ def _maxeig_tuned_evals() -> ArtifactSet:
                     eval_dataset="pretrain",
                     metrics="max_eigenvalue",
                     checkpoint=ckpt,
+                    batch_size=bs,
                 )
             )
     return ArtifactSet(arts)
