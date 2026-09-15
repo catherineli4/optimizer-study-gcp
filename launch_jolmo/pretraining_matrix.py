@@ -1775,9 +1775,16 @@ if _maxeig_want:
 _maxeig_final_only = os.environ.get("OPTIM_MAXEIG_FINAL_ONLY", "").strip() not in ("", "0")
 
 
+# The base JolmoModels must be the SAME OBJECTS the evals point at and must be
+# registered in the same stage group: the executor resolves dependencies by
+# object identity, so a second tuned_bases_for() call would build equal-but-
+# distinct models and every eval would fail "not in the artifact set".
+maxeig_tuned_bases = tuned_bases_for(MAXEIG_CHINCHILLAS)
+
+
 def _maxeig_tuned_evals() -> ArtifactSet:
     arts = []
-    for m in tuned_bases_for(MAXEIG_CHINCHILLAS):
+    for m in maxeig_tuned_bases:
         if _maxeig_final_only:
             ckpts = ["final"]
         else:
