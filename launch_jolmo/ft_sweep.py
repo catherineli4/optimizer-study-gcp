@@ -48,9 +48,24 @@ from launch_jolmo.pretraining_matrix import (
     DCLM_HELDOUT_INSTANCES,
 )
 
-FT_DATASETS: Tuple[str, ...] = (
+_FT_DATASETS_ALL: Tuple[str, ...] = (
     "starcoder", "musicpile", "alpaca", "gsm8k", "stackmathqa",
 )
+# $OPTIM_FT_DATASETS narrows the finetune datasets, e.g. OPTIM_FT_DATASETS=starcoder
+# to regenerate one dataset's cells without touching the other four. Unset means
+# all of them, so an existing sweep's behaviour is unchanged.
+import os as _os_early
+_ft_ds_want = _os_early.environ.get("OPTIM_FT_DATASETS", "").strip()
+if _ft_ds_want:
+    _ft_keep = [d.strip() for d in _ft_ds_want.replace(",", " ").split()]
+    _ft_bad = [d for d in _ft_keep if d not in _FT_DATASETS_ALL]
+    if _ft_bad:
+        raise ValueError(
+            f"OPTIM_FT_DATASETS asks for {_ft_bad}; available: "
+            f"{list(_FT_DATASETS_ALL)}")
+    FT_DATASETS: Tuple[str, ...] = tuple(_ft_keep)
+else:
+    FT_DATASETS: Tuple[str, ...] = _FT_DATASETS_ALL
 # Replay axis removed from the default sweep: plain finetuning only (r=0, no
 # name suffix). The replay machinery (CPTModel.replay_dclm + REPLAY_DCLM_CHUNK)
 # stays available — pass replay_fractions=(0.0, 0.1, ...) per FtSweep to re-arm.
