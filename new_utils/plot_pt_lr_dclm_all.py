@@ -158,6 +158,8 @@ FOREIGN_LEGACY = set()
 # the plots. Keyed (size, chinchilla, optimizer, swept LR).
 EXCLUDE = {
     ("60M", 16.0, "muon", 4e-2),   # 4.05 vs 3.79 at 2.8e-2 and 3.82 at 5.6e-2
+    ("300M", 2.0, "muon", 2e-2),
+    ("300M", 4.0, "muon", 2e-2),
 }
 
 
