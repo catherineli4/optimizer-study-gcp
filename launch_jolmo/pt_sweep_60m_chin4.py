@@ -219,7 +219,15 @@ def _shared_params(global_batch_size: int, weight_decay: float) -> Dict[str, Any
         "tokenizer": TOKENIZER,
         "sequence_length": SEQUENCE_LENGTH,
         # Optimizer
+        # BOTH groups. _build_optimizer_spec routes muon_weight_decay to the
+        # Muon group (the 2-D matrices, i.e. nearly every trainable weight) and
+        # weight_decay to adamw_weight_decay (norms/biases; embeddings are
+        # force-pinned to 0 by the group override). Setting only weight_decay
+        # left the matrices decaying at the 0.1 default in every cell, so the
+        # "wd sweep" varied decay on a small minority of parameters and the
+        # wd=0 cell was not wd=0 at all.
         "weight_decay": weight_decay,
+        "muon_weight_decay": weight_decay,
         "betas": (0.9, 0.98),
         "max_grad_norm": 1.0,
         # Schedule
