@@ -161,6 +161,12 @@ EXCLUDE = {
     ("300M", 2.0, "muon", 2e-2),
     ("300M", 4.0, "muon", 2e-2),
 }
+# Whole (size, chinchilla) cells left out of every figure: no LR sweep exists
+# there, only the single tuned point per optimizer, so a panel has nothing to
+# show. Keyed (size, chinchilla).
+SKIP_CELLS = {
+    ("600M", 2.0),
+}
 
 
 def load(size, d, only_schema=None, tuned_component=None, return_others=False):
@@ -180,7 +186,8 @@ def load(size, d, only_schema=None, tuned_component=None, return_others=False):
                 continue
             cell = json.load(open(os.path.join(d, fn))).get(
                 "by_label", {}).get(LABEL)
-            if cell and (size, float(m.group(1)), opt, float(m.group(2))) in EXCLUDE:
+            if cell and ((size, float(m.group(1))) in SKIP_CELLS or
+                         (size, float(m.group(1)), opt, float(m.group(2))) in EXCLUDE):
                 break
             if cell:
                 schema = "MuonExpt3" if fn.startswith("MuonExpt3") else "PTSweep"
