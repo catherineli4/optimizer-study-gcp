@@ -22,6 +22,7 @@ import subprocess
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 
 BUCKET = "gs://cmu-gpucloud-catheri4"
 LABEL = "DCLM_heldout"
@@ -204,22 +205,111 @@ def write_table(size, data, out):
     print(f"wrote {out}.png / .pdf")
 
 
+def plot_grid(all_data, all_ntok, out):
+    """Every size on one page: rows = (size, optimizer), columns = chinchilla,
+    one line per global batch size in each cell -- the same panel plot() draws,
+    built from the same loaded data. Only chinchillas with more than one batch
+    size at that size get a cell; axes are independent per cell because loss
+    levels differ by >1 nat across sizes and the LR range moves with size.
+    """
+    sizes = [s for s in MODEL_TYPE if s in all_data]
+    rows = []
+    for size in sizes:
+        chins = [c for c in sorted(all_data[size])
+                 if any(len(all_data[size][c].get(o, {})) > 1
+                        for o in ("adamw", "muon"))]
+        if chins:
+            for opt in ("adamw", "muon"):
+                rows.append((size, opt, chins))
+    if not rows:
+        print("grid: no size has a multi-batch chinchilla, skipping")
+        return
+    chins_all = sorted({c for _, _, cs in rows for c in cs})
+    ramp = plt.cm.Blues([0.42, 0.68, 0.95])
+    fig, axes = plt.subplots(len(rows), len(chins_all),
+                             figsize=(3.1 * len(chins_all), 2.7 * len(rows)),
+                             squeeze=False)
+    for r, (size, opt, chins) in enumerate(rows):
+        first = None
+        for c, chin in enumerate(chins_all):
+            ax = axes[r][c]
+            series = all_data[size].get(chin, {}).get(opt, {})
+            if chin not in chins or not series:
+                ax.axis("off")
+                continue
+            first = c if first is None else first
+            for bi, bs in enumerate(BATCHES):
+                pts = sorted(series.get(bs, {}).items())
+                if not pts:
+                    continue
+                ax.plot([q[0] for q in pts], [q[1] for q in pts], "o-",
+                        color=ramp[bi], markersize=4, linewidth=1.5,
+                        label=f"batch {bs}", zorder=3)
+                blr, bval = min(pts, key=lambda q: q[1])
+                ax.scatter([blr], [bval], s=95, facecolors="none",
+                           edgecolors=ramp[bi], linewidths=1.6, zorder=4)
+            ax.set_xscale("log")
+            # A narrow LR span leaves the log minor labels (2x, 3x, 4x, 6x)
+            # colliding into mush; label majors only and cap their count.
+            ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+            ax.xaxis.set_major_locator(mticker.LogLocator(numticks=3))
+            ax.xaxis.set_major_formatter(mticker.LogFormatterSciNotation())
+            ax.grid(True, alpha=0.25, linewidth=0.5)
+            ax.tick_params(labelsize=7, colors=MUTED)
+            if r == 0 or rows[r - 1][0] != size:
+                ax.set_title(f"chinchilla {chin:g}", fontsize=9.5, color=INK)
+            if r == len(rows) - 1:
+                ax.set_xlabel("cell LR  (muon: muon_lr)", fontsize=8, color=MUTED)
+        if first is not None:
+            axes[r][first].set_ylabel(f"{size} ({MODEL_TYPE[size]}) — {opt}\n"
+                                      f"{LABEL} loss", fontsize=8.5, color=INK)
+    handles = [plt.Line2D([], [], color=ramp[i], marker="o", markersize=4,
+                          linewidth=1.5, label=f"batch {b}")
+               for i, b in enumerate(BATCHES)]
+    handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=8,
+                              markerfacecolor="none", linestyle="none",
+                              label="best LR"))
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+               frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.01))
+    toks = {t for s in sizes for t in all_ntok.get(s, ())}
+    tok = f"{min(toks):,}" if toks else "?"
+    fig.suptitle(f"Pretrain LR vs held-out DCLM loss across global batch size, "
+                 f"every size x token budget (wd 0.1)  —  {tok} eval tokens/point",
+                 fontsize=13, color=INK)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.975))
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf  ({len(rows)} rows x {len(chins_all)} cols)")
+
+
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
-    p.add_argument("--sizes", nargs="+", default=["60M"])
+    p.add_argument("--sizes", nargs="+", default=["30M", "60M", "100M", "600M"])
+    p.add_argument("--refresh", action="store_true",
+                   help="re-list GCS instead of using the cached names_<size>.txt")
     p.add_argument("--cache", default="/mnt/localssd/bscache")
     p.add_argument("--out-dir", default=os.path.join(repo, "colm-moss-latex"))
     a = p.parse_args()
     os.makedirs(a.cache, exist_ok=True)
     os.makedirs(a.out_dir, exist_ok=True)
+    all_data, all_ntok = {}, {}
     for size in a.sizes:
+        if a.refresh:
+            lst = os.path.join(a.cache, f"names_{size}.txt")
+            if os.path.exists(lst):
+                os.remove(lst)
         data, ntok = load(size, a.cache)
         n = sum(len(v) for c in data.values() for b in c.values() for v in b.values())
         print(f"{size}: {n} runs over {len(data)} chinchilla(s)")
+        if not data:
+            continue
+        all_data[size], all_ntok[size] = data, ntok
         plot(size, data, ntok, os.path.join(a.out_dir, f"pt-lr-dclm-bs-{size}"))
         write_table(size, data,
                     os.path.join(a.out_dir, f"pt-lr-dclm-bs-{size}-besttable"))
+    plot_grid(all_data, all_ntok, os.path.join(a.out_dir, "pt-lr-dclm-bs-grid"))
 
 
 if __name__ == "__main__":
