@@ -482,6 +482,74 @@ def plot_curves_vs_size(raw, out, degradation=False, min_sizes=2):
     print(f"wrote {out}.png / .pdf")
 
 
+SIZE_MARKER = {"30M": "o", "60M": "s", "100M": "^", "300M": "D", "600M": "P"}
+OPT_COLOR = {"adamw": "#2a78d6", "muon": "#eb6834"}
+
+
+def plot_degradation_vs_loss(raw, out, gamma=0.01, relative=False):
+    """Every tuned base as one point: x = its unperturbed held-out loss,
+    y = its degradation at one gamma (log scale). Colour = optimizer, marker =
+    size, so the question "is the muon/adamw robustness gap explained by
+    where each model sits on the loss axis?" can be read directly: two clouds
+    that separate vertically at equal x are a real optimizer effect; clouds
+    lying on one curve are just the loss-level effect.
+    relative=True divides the degradation by the unperturbed loss.
+    """
+    pts = []
+    for (g, size, chin, opt), v in raw.items():
+        if g is None or abs(g - gamma) > 1e-12:
+            continue
+        base = raw.get((None, size, chin, opt))
+        if base is None:
+            continue
+        d = v - base
+        if relative:
+            d = d / base
+        if d <= 0:
+            print(f"  {size} c{chin:g} {opt}: non-positive degradation {d:.4g} at "
+                  f"gamma {gamma:g}, cannot go on a log axis -- dropped")
+            continue
+        pts.append((size, chin, opt, base, d))
+    if not pts:
+        print(f"no points at gamma {gamma:g}")
+        return
+    fig, ax = plt.subplots(figsize=(7.2, 5.0))
+    for size in SIZES:
+        for opt in ("adamw", "muon"):
+            sel = [q for q in pts if q[0] == size and q[2] == opt]
+            if not sel:
+                continue
+            ax.scatter([q[3] for q in sel], [q[4] for q in sel], s=48,
+                       marker=SIZE_MARKER[size], color=OPT_COLOR[opt],
+                       edgecolors="white", linewidths=0.6, alpha=0.9, zorder=3)
+    for size, chin, opt, base, d in pts:
+        ax.annotate(f"{chin:g}", (base, d), textcoords="offset points",
+                    xytext=(4, 3), fontsize=6, color=OPT_COLOR[opt], alpha=0.8)
+    ax.set_yscale("log")
+    ax.set_xlabel("unperturbed held-out DCLM loss", fontsize=10, color=MUTED)
+    ax.set_ylabel(("relative degradation  (perturbed − base) / base"
+                   if relative else "degradation  perturbed − base  (nats)")
+                  + f"   at $\\gamma$ = {gamma:g}", fontsize=10, color=INK)
+    ax.grid(True, which="both", alpha=0.22, linewidth=0.5)
+    ax.tick_params(labelsize=8.5, colors=MUTED)
+    handles = [plt.Line2D([], [], color=OPT_COLOR[o], marker="o", linestyle="none",
+                          markersize=7, label=o) for o in ("adamw", "muon")]
+    handles += [plt.Line2D([], [], color=MUTED, marker=SIZE_MARKER[z],
+                           linestyle="none", markersize=6.5, label=z)
+                for z in SIZES if any(q[0] == z for q in pts)]
+    ax.legend(handles=handles, frameon=False, fontsize=8.5, ncol=2,
+              loc="upper left")
+    ax.set_title(f"{'Relative d' if relative else 'D'}egradation under Gaussian "
+                 f"weight perturbation ($\\gamma$ = {gamma:g}) vs model quality"
+                 f"\nevery tuned base; small label = chinchilla",
+                 fontsize=11.5, color=INK)
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf  ({len(pts)} points)")
+
+
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
@@ -544,6 +612,11 @@ def main():
     plot_curves(raw, os.path.join(a.out_dir, "perturb-loss-vs-chinchilla"))
     plot_curves(raw, os.path.join(a.out_dir, "perturb-degradation-vs-chinchilla"),
                 degradation=True)
+
+    plot_degradation_vs_loss(raw, os.path.join(a.out_dir, "perturb-degradation-vs-loss-g0.01"),
+                             gamma=0.01)
+    plot_degradation_vs_loss(raw, os.path.join(a.out_dir, "perturb-reldegradation-vs-loss-g0.01"),
+                             gamma=0.01, relative=True)
 
     plot_curves_vs_size(raw, os.path.join(a.out_dir, "perturb-loss-vs-size"))
     plot_curves_vs_size(raw, os.path.join(a.out_dir, "perturb-degradation-vs-size"),
