@@ -256,6 +256,70 @@ def plot_axis(runs, axis, out, size, min_points=3, max_lines=14):
     print(f"wrote {out}.png / .pdf   ({len(sl)} slice(s))")
 
 
+def plot_wd_pinned_all_sizes(sizes, cache_root, out, chinchilla=1.0,
+                             min_points=2, sync_first=True):
+    """One figure, one panel per size: DCLM loss vs the MUON group's weight
+    decay with the AdamW group pinned at its default. Only the pinned family
+    is drawn -- the older both-groups sweeps varied norm-gain decay too and
+    are not the same experiment. Loss levels differ by >1 nat across sizes,
+    so each panel keeps its own y axis; x is shared.
+    """
+    panels = []
+    for size in sizes:
+        cache = os.path.join(cache_root, size)
+        if sync_first:
+            sync(cache, size)
+        runs = [r for r in load(cache, size)
+                if r["chinchilla"] == chinchilla and r["num_tokens"] == 4193280]
+        sl = [(spec, pts) for spec, pts in slices(runs, "weight_decay", min_points)
+              if "pinned_adamw_wd" in spec and spec["optimizer"] == "muon"]
+        if not sl:
+            print(f"{size}: no pinned-adamw muon wd sweep at chinchilla {chinchilla:g}")
+            continue
+        sl.sort(key=lambda t: -len(t[1]))
+        panels.append((size, sl))
+    if not panels:
+        print("nothing to plot"); return
+
+    fig, axes = plt.subplots(1, len(panels), figsize=(3.6 * len(panels), 3.6),
+                             squeeze=False, sharex=True)
+    for i, (size, sl) in enumerate(panels):
+        ax = axes[0][i]
+        for spec, pts in sl:
+            xs, ys = [x for x, _ in pts], [y for _, y in pts]
+            ax.plot(xs, ys, "o-", color=COLOR["muon"], linewidth=1.9,
+                    markersize=5.5, zorder=3)
+            # Mark the tuned base (the adamw-pinned default) so the reader
+            # sees which point every other analysis was built on.
+            k = [j for j, x in enumerate(xs) if x == spec["pinned_adamw_wd"]]
+            if k:
+                ax.scatter([xs[k[0]]], [ys[k[0]]], s=140, facecolors="none",
+                           edgecolors=INK, linewidths=1.6, zorder=4)
+            ax.set_title(f"{size}   muon lr {spec['lr']:.2g}, adamw comp "
+                         f"{spec['adamw_component']:.2g}", fontsize=9.5, color=INK)
+        ax.set_xlabel("Muon-group weight decay", fontsize=9, color=MUTED)
+        ax.grid(True, alpha=0.25, linewidth=0.6)
+        ax.tick_params(labelsize=8, colors=MUTED)
+        ax.margins(y=0.2)
+        if i == 0:
+            ax.set_ylabel(f"{LABEL} loss", fontsize=10, color=INK)
+    handles = [plt.Line2D([], [], color=COLOR["muon"], marker="o", markersize=5.5,
+                          linewidth=1.9, label="muon, AdamW-group wd pinned at 0.1"),
+               plt.Line2D([], [], color=INK, marker="o", markersize=9,
+                          markerfacecolor="none", linestyle="none",
+                          label="tuned base (wd 0.1)")]
+    fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False,
+               fontsize=9.5, bbox_to_anchor=(0.5, -0.06))
+    fig.suptitle(f"Held-out DCLM loss vs Muon weight decay at chinchilla "
+                 f"{chinchilla:g}  —  AdamW group (norm gains, lm_head) held at "
+                 f"wd 0.1 in every cell", fontsize=12, color=INK)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.94))
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf  ({len(panels)} size(s))")
+
+
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
@@ -265,6 +329,10 @@ def main():
     p.add_argument("--out-dir", default=os.path.join(repo, "colm-moss-latex"))
     p.add_argument("--axis", choices=AXES + ["all"], default="all")
     p.add_argument("--min-points", type=int, default=3)
+    p.add_argument("--wd-all-sizes", nargs="*", metavar="SIZE",
+                   help="instead of the per-size slice figures, draw one figure "
+                        "of the pinned-adamw muon wd sweep across these sizes "
+                        "(default 30M 60M 100M 300M) at --chinchilla (default 1)")
     p.add_argument("--chinchilla", type=float, default=None,
                    help="restrict to one token budget, so a size whose sweep "
                         "covers several does not bury the cell of interest")
@@ -275,6 +343,15 @@ def main():
                    help="plot runs evaluated on a different held-out set anyway")
     a = p.parse_args()
 
+    if a.wd_all_sizes is not None:
+        sizes = a.wd_all_sizes or ["30M", "60M", "100M", "300M"]
+        chin = 1.0 if a.chinchilla is None else a.chinchilla
+        os.makedirs(a.out_dir, exist_ok=True)
+        plot_wd_pinned_all_sizes(
+            sizes, "/mnt/localssd/pt-eval-cache",
+            os.path.join(a.out_dir, f"pt-dclm-vs-muon-wd-c{chin:g}-all-sizes"),
+            chinchilla=chin, min_points=a.min_points, sync_first=not a.no_sync)
+        return
     if a.cache is None:
         a.cache = f"/mnt/localssd/pt-eval-cache/{a.size}"
     if not a.no_sync:
