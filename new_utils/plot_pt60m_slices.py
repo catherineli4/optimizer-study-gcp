@@ -315,6 +315,76 @@ def plot_wd_pinned_all_sizes(sizes, cache_root, out, chinchilla=1.0,
     print(f"wrote {out}.png / .pdf  ({len(panels)} size(s))")
 
 
+def plot_comp_all_sizes(sizes, cache_root, out, chinchilla=1.0, sync_first=True):
+    """DCLM loss vs the adamw COMPONENT of the muon pair, muon_lr held at the
+    table's tuned value, one line per size on a single axis (absolute loss).
+    The tuned component is ringed. wd 0.1 / batch 1M cells only.
+    """
+    from new_utils.plot_pt_lr_dclm_all import tuned_lrs, tuned_adamw_lrs
+    lines = []
+    for size in sizes:
+        cache = os.path.join(cache_root, size)
+        if sync_first:
+            sync(cache, size)
+        mlr = tuned_lrs(size)["muon"].get(chinchilla)
+        comp = tuned_adamw_lrs(size).get(chinchilla)
+        if mlr is None:
+            print(f"{size}: no tuned muon pair at chinchilla {chinchilla:g}"); continue
+        pts = {}
+        for r in load(cache, size):
+            if (r["optimizer"] == "muon" and r["chinchilla"] == chinchilla
+                    and r["batch_size"] == "1M" and not r["muon_only"]
+                    and r["weight_decay"] == 0.1 and abs(r["lr"] - mlr) < 1e-12
+                    and r["num_tokens"] == 4193280):
+                pts.setdefault(r["adamw_component"], []).append(r["loss"])
+        # The component sweep is one sqrt(2) grid step either side of the
+        # tuned value; older runs at other components are a different
+        # experiment and would set the axis (100M has a comp-0.001 run at 4.33).
+        if comp is not None:
+            want = (comp / 2 ** 0.5, comp, comp * 2 ** 0.5)
+            pts = {x: v for x, v in pts.items()
+                   if any(abs(x - w) / w < 0.08 for w in want)}
+        if len(pts) < 2:
+            print(f"{size}: only {len(pts)} component(s) at muon lr {mlr:g}, skipping")
+            continue
+        xs = sorted(pts)
+        ys = [sum(pts[x]) / len(pts[x]) for x in xs]
+        lines.append((size, mlr, comp, xs, ys))
+    if not lines:
+        print("nothing to plot"); return
+
+    ramp = plt.cm.viridis([0.08, 0.32, 0.56, 0.8, 0.95][:len(lines)])
+    fig, ax = plt.subplots(figsize=(6.8, 4.8))
+    for (size, mlr, comp, xs, ys), colour in zip(lines, ramp):
+        ax.plot(xs, ys, "o-", color=colour, linewidth=1.9, markersize=5.5,
+                zorder=3, label=f"{size}  (muon lr {mlr:.2g})")
+        k = [i for i, x in enumerate(xs) if comp is not None and abs(x - comp) < 1e-12]
+        if k:
+            ax.scatter([xs[k[0]]], [ys[k[0]]], s=140, facecolors="none",
+                       edgecolors=INK, linewidths=1.5, zorder=4)
+    ax.set_xscale("log")
+    ax.set_xlabel("adamw component LR  (norm gains, lm_head)", fontsize=10, color=MUTED)
+    ax.set_ylabel(f"{LABEL} loss", fontsize=10, color=INK)
+    ax.grid(True, alpha=0.25, linewidth=0.6)
+    ax.tick_params(labelsize=8.5, colors=MUTED)
+    handles, labels = ax.get_legend_handles_labels()
+    handles.append(plt.Line2D([], [], color=INK, marker="o", markersize=9,
+                              markerfacecolor="none", linestyle="none"))
+    labels.append("tuned component (table)")
+    ax.legend(handles, labels, frameon=False, fontsize=9, loc="center right",
+              bbox_to_anchor=(0.99, 0.74))
+    ax.set_title(f"Held-out DCLM loss vs adamw component at chinchilla "
+                 f"{chinchilla:g}  —  muon lr fixed at the tuned value, wd 0.1",
+                 fontsize=11, color=INK, pad=10)
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf  ({len(lines)} size(s))")
+    for size, mlr, comp, xs, ys in lines:
+        print(f"  {size}: " + "  ".join(f"comp {x:g} -> {y:.4f}{' *' if comp is not None and abs(x-comp)<1e-12 else ''}" for x, y in zip(xs, ys)))
+
+
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
@@ -328,6 +398,9 @@ def main():
                    help="instead of the per-size slice figures, draw one figure "
                         "of the pinned-adamw muon wd sweep across these sizes "
                         "(default 30M 60M 100M 300M) at --chinchilla (default 1)")
+    p.add_argument("--comp-all-sizes", nargs="*", metavar="SIZE",
+                   help="one figure of loss vs adamw component at the tuned "
+                        "muon lr across these sizes (default 30M 60M 100M)")
     p.add_argument("--chinchilla", type=float, default=None,
                    help="restrict to one token budget, so a size whose sweep "
                         "covers several does not bury the cell of interest")
@@ -338,6 +411,15 @@ def main():
                    help="plot runs evaluated on a different held-out set anyway")
     a = p.parse_args()
 
+    if a.comp_all_sizes is not None:
+        sizes = a.comp_all_sizes or ["30M", "60M", "100M"]
+        chin = 1.0 if a.chinchilla is None else a.chinchilla
+        os.makedirs(a.out_dir, exist_ok=True)
+        plot_comp_all_sizes(
+            sizes, "/mnt/localssd/pt-eval-cache",
+            os.path.join(a.out_dir, f"pt-dclm-vs-adamw-comp-c{chin:g}-all-sizes"),
+            chinchilla=chin, sync_first=not a.no_sync)
+        return
     if a.wd_all_sizes is not None:
         sizes = a.wd_all_sizes or ["30M", "60M", "100M", "300M"]
         chin = 1.0 if a.chinchilla is None else a.chinchilla
