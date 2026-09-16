@@ -534,6 +534,40 @@ def _pretrain_eval(model) -> ModelEvaluation:
 
 pt60m4_lr_sweep_evals = ArtifactSet([_pretrain_eval(m) for m in pt60m4_lr_sweep])
 pt60m4_wd_sweep_evals = ArtifactSet([_pretrain_eval(m) for m in pt60m4_wd_sweep])
+
+
+# ---------------------------------------------------------------------------
+# Gaussian perturbation (+ evals) of the wd-sweep cells, and the base set the
+# h/kappa margins sweep reads (margin_stats_sweep --bases ptsweep-wd).
+#
+# Bases = the swept cells PLUS the tuned base of this (size, chinchilla) for
+# the swept optimizer(s), resolved through tuned_bases_for so it is whichever
+# schema exists (at 300M the c1 muon base is MuonExpt3-named). Dedup is by
+# run_name: if the sweep list includes the default wd, its cell IS the base.
+# Gammas, the DCLM held-out chunks and the instance cap are the perturb-wide
+# recipe's own, so these cells are comparable with the size x chinchilla
+# heatmaps cell-for-cell.
+# ---------------------------------------------------------------------------
+from launch_jolmo.pretraining_matrix import PERTURB_WIDE_GAMMAS, tuned_bases_for
+from launch_jolmo.perturb import (
+    build_perturbed_models, build_perturbed_model_evaluations)
+
+
+def _wd_sweep_with_base() -> ArtifactSet:
+    seen = {m.run_name: m for m in pt60m4_wd_sweep}
+    if _SIZE_OK and seen:
+        for b in tuned_bases_for([CHINCHILLA], optimizers=tuple(SWEEP_OPTIMIZERS)):
+            seen.setdefault(b.run_name, b)
+    return ArtifactSet(list(seen.values()))
+
+
+pt60m4_wd_perturb_bases = _wd_sweep_with_base()
+pt60m4_wd_perturb = build_perturbed_models(
+    pt60m4_wd_perturb_bases, gammas=PERTURB_WIDE_GAMMAS)
+pt60m4_wd_perturb_evals = build_perturbed_model_evaluations(
+    pt60m4_wd_perturb,
+    extra_val_chunks=dclm_heldout_val_chunks,
+    extra_val_max_instances=DCLM_HELDOUT_INSTANCES)
 pt60m4_bs_sweep_evals = ArtifactSet([_pretrain_eval(m) for m in pt60m4_bs_sweep])
 pt60m4_all_evals = (pt60m4_lr_sweep_evals
                     + pt60m4_wd_sweep_evals

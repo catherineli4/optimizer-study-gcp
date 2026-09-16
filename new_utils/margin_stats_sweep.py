@@ -36,6 +36,13 @@ def main():
     ap.add_argument("--chinchillas", default="",
                     help="comma list; default every tuned chinchilla at this size")
     ap.add_argument("--save-per-token", action="store_true")
+    ap.add_argument("--bases", choices=["tuned", "ptsweep-wd"], default="tuned",
+                    help="tuned: every tuned base at this size (default). "
+                         "ptsweep-wd: the weight-decay sweep cells plus their "
+                         "tuned base, from pt_sweep_60m_chin4 -- set the "
+                         "OPTIM_PTSWEEP_* knobs exactly as for the sweep.")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="list the bases that would be scored and exit")
     args = ap.parse_args()
 
     # Importing the launcher initialises Project.config (remote paths, bucket).
@@ -58,9 +65,19 @@ def main():
                              f"available {[f'{c:g}' for c in chins]}")
         chins = [c for c in chins if c in keep]
 
-    bases = list(tuned_bases_for(chins))
-    print(f"[sweep] {size}: {len(bases)} tuned base(s) over "
-          f"chinchillas {[f'{c:g}' for c in chins]}", flush=True)
+    if args.bases == "ptsweep-wd":
+        from launch_jolmo.pt_sweep_60m_chin4 import pt60m4_wd_perturb_bases
+        bases = list(pt60m4_wd_perturb_bases)
+        print(f"[sweep] {size}: {len(bases)} wd-sweep base(s) (cells + tuned base)",
+              flush=True)
+    else:
+        bases = list(tuned_bases_for(chins))
+        print(f"[sweep] {size}: {len(bases)} tuned base(s) over "
+              f"chinchillas {[f'{c:g}' for c in chins]}", flush=True)
+    if args.dry_run:
+        for b in bases:
+            print(f"[sweep]   {b.run_name}")
+        return
 
     out_dir = os.path.join(args.out_dir, size)
     os.makedirs(out_dir, exist_ok=True)

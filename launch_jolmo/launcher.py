@@ -39,6 +39,9 @@ from launch_jolmo.pt_sweep_60m_chin4 import (
     pt60m4_cpt_full_grid_evals,
     pt60m4_lr_sweep_evals,
     pt60m4_wd_sweep_evals,
+    pt60m4_wd_perturb_bases,
+    pt60m4_wd_perturb,
+    pt60m4_wd_perturb_evals,
     pt60m4_bs_sweep_evals,
     pt60m4_all_evals,
 )
@@ -215,6 +218,12 @@ executor.stage("pt60m4-cpt-full-grid-evals", pt60m4_cpt_full_grid_evals)
 executor.stage("pt60m4-lr-sweep-evals",  pt60m4_lr_sweep_evals)
 executor.stage("pt60m4-wd-sweep-evals",  pt60m4_wd_sweep_evals)
 executor.stage("pt60m4-bs-sweep-evals",  pt60m4_bs_sweep_evals)
+
+# Gaussian perturbation of the wd-sweep cells (+ tuned base), perturb-wide recipe.
+executor.stage("pt60m4-wd-perturb-bases", pt60m4_wd_perturb_bases)  # dependency only
+executor.stage("pt60m4-wd-perturb-runs",  pt60m4_wd_perturb)
+executor.stage_group("pt60m4-wd-perturb", ("pt60m4-wd-perturb-bases", "pt60m4-wd-perturb-runs"))
+executor.stage("pt60m4-wd-perturb-evals", pt60m4_wd_perturb_evals)
 executor.stage("pt60m4-all-evals",       pt60m4_all_evals)
 
 # --- Associative-facts pretrain (<bos> v[126] r u[126] <eos>+pad, CE only on u) ---
