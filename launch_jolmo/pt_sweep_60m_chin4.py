@@ -165,6 +165,11 @@ _pts_wd = os.environ.get("OPTIM_PTSWEEP_WD", "").strip()
 if _pts_wd:
     SWEEP_WD = [float(x) for x in _pts_wd.replace(",", " ").split()]
 
+# OPTIM_PTSWEEP_NO_NORM_WD=1 exempts the RMSNorm gains from weight decay and
+# appends -nonormwd to the run name, so these are distinct artifacts from the
+# runs that decayed the gains (see JolmoModel.decay_norms).
+DECAY_NORMS = os.environ.get("OPTIM_PTSWEEP_NO_NORM_WD", "").strip() in ("", "0")
+
 _pts_opt = os.environ.get("OPTIM_PTSWEEP_OPTIMIZERS", "").strip()
 if _pts_opt:
     SWEEP_OPTIMIZERS = [o.strip() for o in _pts_opt.replace(",", " ").split()]
@@ -228,6 +233,7 @@ def _shared_params(global_batch_size: int, weight_decay: float) -> Dict[str, Any
         # wd=0 cell was not wd=0 at all.
         "weight_decay": weight_decay,
         "muon_weight_decay": weight_decay,
+        "decay_norms": DECAY_NORMS,
         "betas": (0.9, 0.98),
         "max_grad_norm": 1.0,
         # Schedule
@@ -273,6 +279,7 @@ def _model(opt: str, lr, weight_decay: float, global_batch_size: int) -> JolmoMo
     name = (
         f"{NAME_PREFIX}-{MODEL_TYPE}-chinchilla-{CHINCHILLA}-{opt}-{lr_tag}"
         f"-{_wd_tag(weight_decay)}-{_bs_tag(global_batch_size)}-{SCHEDULER}"
+        + ("" if DECAY_NORMS else "-nonormwd")
     )
     return JolmoModel(
         model_name=name,

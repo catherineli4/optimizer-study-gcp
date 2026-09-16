@@ -155,6 +155,7 @@ def _build_optimizer_spec(
     *,
     muon_lr: float = 0.02,
     muon_weight_decay: float = 0.1,
+    decay_norms: bool = True,
 ) -> Dict[str, Any]:
     cls = _optimizer_class_name(optimizer)
 
@@ -163,6 +164,22 @@ def _build_optimizer_spec(
         "params": ["embeddings.weight"],
         "opts": {"weight_decay": 0.0},
     }
+    overrides = [embedding_override]
+    if not decay_norms:
+        # Exempt the RMSNorm gains (every ndim=1 parameter: q_norm, k_norm,
+        # attention_norm, feed_forward_norm per block, lm_head.norm). With the
+        # embedding-only exemption they sit in the AdamW group and decay at the
+        # ADAMW lr x wd -- for a muon run that is the tuned adamw component,
+        # 4-5x the Muon lr at these sizes -- so a "weight decay" sweep mostly
+        # shrinks the gains toward zero while the matrices barely move (3.5% at
+        # wd=0.1 vs 26% on the gains, and lm_head halved). Standard recipes
+        # exempt ndim<2 params; this flag does the same. Default keeps the old
+        # behaviour so existing artifacts still mean what their names say.
+        overrides.append({
+            "_CLASS_": "olmo_core.optim.OptimGroupOverride",
+            "params": ["*norm.weight"],
+            "opts": {"weight_decay": 0.0},
+        })
 
     if cls == "olmo_core.optim.MuonConfig":
         return {
@@ -172,7 +189,7 @@ def _build_optimizer_spec(
             "adamw_lr": lr,
             "adamw_betas": list(betas),
             "adamw_weight_decay": weight_decay,
-            "group_overrides": [embedding_override],
+            "group_overrides": overrides,
         }
 
     spec: Dict[str, Any] = {
@@ -180,7 +197,7 @@ def _build_optimizer_spec(
         "lr": lr,
         "betas": list(betas),
         "weight_decay": weight_decay,
-        "group_overrides": [embedding_override],
+        "group_overrides": overrides,
     }
     if cls in {"olmo_core.optim.AdamWConfig", "olmo_core.optim.AdamConfig"}:
         spec["fused"] = True
@@ -489,6 +506,8 @@ class JolmoModel(Artifact):
     optimizer: Literal["adamw", "adam", "muon"] = "adamw"
     muon_lr: float = 0.02
     muon_weight_decay: float = 0.1
+    # False = RMSNorm gains exempt from weight decay (see _build_optimizer_spec).
+    decay_norms: bool = True
     scheduler: Literal["cosine", "constant", "inv_sqrt", "wsd"] = "cosine"
     compile_model: bool = True
     max_grad_norm: float = 1.0
@@ -718,6 +737,7 @@ class JolmoModel(Artifact):
                 "optim": _build_optimizer_spec(
                     self.optimizer, self.learning_rate, self.betas, self.weight_decay,
                     muon_lr=self.muon_lr, muon_weight_decay=self.muon_weight_decay,
+                    decay_norms=self.decay_norms,
                 ),
                 "scheduler": _build_scheduler_spec(self.scheduler, self.warmup_steps),
                 "compile_model": self.compile_model,
