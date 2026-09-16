@@ -152,6 +152,17 @@ def sync(size, cache):
 FOREIGN_LEGACY = set()
 
 
+# Individual runs dropped from every figure this module draws. Each is a single
+# eval that sits far off its neighbours on both sides of the sweep; the
+# checkpoints and evals stay on GCS untouched, this only keeps them out of
+# the plots. Keyed (size, chinchilla, optimizer, swept LR).
+EXCLUDE = {
+    ("300M", 2.0, "muon", 1e-2),   # 3.25 vs 3.15 at 1.4e-2 and 3.20 at 2e-2
+    ("300M", 4.0, "muon", 1e-2),   # 3.18 vs 3.10 at 1.4e-2
+    ("60M", 16.0, "muon", 4e-2),   # 4.05 vs 3.79 at 2.8e-2 and 3.82 at 5.6e-2
+}
+
+
 def load(size, d, only_schema=None, tuned_component=None, return_others=False):
     """{chinchilla: {optimizer: {lr: [losses]}}} — a list per LR because the
     two naming schemas are independent runs of the same recipe.
@@ -169,6 +180,8 @@ def load(size, d, only_schema=None, tuned_component=None, return_others=False):
                 continue
             cell = json.load(open(os.path.join(d, fn))).get(
                 "by_label", {}).get(LABEL)
+            if cell and (size, float(m.group(1)), opt, float(m.group(2))) in EXCLUDE:
+                break
             if cell:
                 schema = "MuonExpt3" if fn.startswith("MuonExpt3") else "PTSweep"
                 if only_schema and schema != only_schema:
