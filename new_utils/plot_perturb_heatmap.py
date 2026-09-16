@@ -687,8 +687,11 @@ def plot_degradation_vs_loss_combined(raw, out, gamma=0.01, facet="size"):
                               fontsize=8.5, color=INK)
         # Shared y within the metric block: same limits on every panel.
         block = [axes[r * per + i // ncol][i % ncol] for i in range(len(keys))]
-        lo = min(ax.get_ylim()[0] for ax in block)
-        hi = max(ax.get_ylim()[1] for ax in block)
+        # Limits from the DATA with log-headroom, not from the panels'
+        # autoscaled ranges: a panel whose points sit at the extreme (the
+        # chinchilla-128 pair at 8e-2) otherwise lands them on the border.
+        ys = [q[4] for q in pts]
+        lo, hi = min(ys) / 1.6, max(ys) * 1.6
         for ax in block:
             ax.set_ylim(lo, hi)
 
