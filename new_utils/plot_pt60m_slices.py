@@ -281,37 +281,31 @@ def plot_wd_pinned_all_sizes(sizes, cache_root, out, chinchilla=1.0,
     if not panels:
         print("nothing to plot"); return
 
-    # One axis for every size. Absolute losses sit >1 nat apart, which would
-    # flatten each curve to a band, so the y axis is the change relative to
-    # that size's tuned base (wd 0.1): every line passes through zero there
-    # and the slopes are directly comparable. Size is ordered, so the lines
-    # take a single-hue sequential ramp rather than categorical colours.
+    # One axis for every size, absolute final loss. Size is ordered, so the
+    # lines take a single-hue sequential ramp rather than categorical colours.
     ramp = plt.cm.viridis([0.08, 0.32, 0.56, 0.8, 0.95][:len(panels)])
-    fig, ax = plt.subplots(figsize=(6.8, 4.4))
-    ax.axhline(0, color=RULE, linewidth=1.1, zorder=1)
+    fig, ax = plt.subplots(figsize=(6.8, 4.8))
     for (size, sl), colour in zip(panels, ramp):
         spec, pts = sl[0]
         xs, ys = [x for x, _ in pts], [y for _, y in pts]
-        base = [y for x, y in pts if x == spec["pinned_adamw_wd"]]
-        if not base:
-            print(f"{size}: no wd {spec['pinned_adamw_wd']:g} base point, skipping")
-            continue
-        d = [y - base[0] for y in ys]
-        ax.plot(xs, d, "o-", color=colour, linewidth=1.9, markersize=5.5,
+        ax.plot(xs, ys, "o-", color=colour, linewidth=1.9, markersize=5.5,
                 zorder=3, label=f"{size}  (muon lr {spec['lr']:.2g})")
-        ax.annotate(f"{d[-1]:+.3f}", (xs[-1], d[-1]), textcoords="offset points",
-                    xytext=(5, 0), ha="left", va="center", fontsize=8,
-                    color=colour)
+        k = [j for j, x in enumerate(xs) if x == spec["pinned_adamw_wd"]]
+        if k:
+            ax.scatter([xs[k[0]]], [ys[k[0]]], s=140, facecolors="none",
+                       edgecolors=INK, linewidths=1.5, zorder=4)
     ax.set_xlabel("Muon-group weight decay", fontsize=10, color=MUTED)
-    ax.set_ylabel(f"{LABEL} loss  −  loss at wd 0.1 (tuned base)", fontsize=10,
-                  color=INK)
+    ax.set_ylabel(f"{LABEL} loss", fontsize=10, color=INK)
     ax.grid(True, alpha=0.25, linewidth=0.6)
     ax.tick_params(labelsize=8.5, colors=MUTED)
-    ax.margins(x=0.12)
-    ax.legend(frameon=False, fontsize=9, loc="upper left")
-    ax.set_title(f"Muon weight decay at chinchilla {chinchilla:g}, AdamW group "
-                 f"held at wd 0.1  —  change in held-out DCLM loss vs the tuned "
-                 f"base", fontsize=11, color=INK, pad=10)
+    handles, labels = ax.get_legend_handles_labels()
+    handles.append(plt.Line2D([], [], color=INK, marker="o", markersize=9,
+                              markerfacecolor="none", linestyle="none"))
+    labels.append("tuned base (wd 0.1)")
+    ax.legend(handles, labels, frameon=False, fontsize=9, loc="center right")
+    ax.set_title(f"Held-out DCLM loss vs Muon weight decay at chinchilla "
+                 f"{chinchilla:g}  —  AdamW group held at wd 0.1",
+                 fontsize=11, color=INK, pad=10)
     fig.tight_layout()
     for ext in ("png", "pdf"):
         fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
