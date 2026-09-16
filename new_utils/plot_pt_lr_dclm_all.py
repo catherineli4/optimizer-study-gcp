@@ -527,8 +527,6 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                             textcoords="offset points", xytext=(0, dy),
                             ha="center", va=va, fontsize=7, fontweight="bold",
                             color=COLOR[opt], zorder=5)
-            if all_others:
-                _draw_others(ax, all_others.get(size, {}).get(chin), fontsize=6)
             ax.set_xscale("log")
             ax.xaxis.set_minor_formatter(mticker.NullFormatter())
             ax.xaxis.set_major_locator(mticker.LogLocator(numticks=3))
@@ -555,10 +553,6 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=8,
                               markerfacecolor="none", linestyle="none",
                               label="table LR (annotated)"))
-    if all_others and any(v for d in all_others.values() for v in d.values()):
-        handles.append(plt.Line2D([], [], color=COLOR["muon"],
-                                  label="muon, other adamw component (dashed)",
-                                  **OTHER_STYLE))
     fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False,
                fontsize=10, bbox_to_anchor=(0.5, -0.012))
     toks = {t for s in sizes for t in all_ntok.get(s, ())}
