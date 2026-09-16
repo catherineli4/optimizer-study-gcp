@@ -44,7 +44,7 @@ from launch_jolmo.sizes import active_profile
 # truth: if the DCLM layout or the validation set changes there, it changes here.
 from launch_jolmo.pretraining_matrix import (
     TOKENIZER,
-    BASE_TOKENS_OVERRIDE,
+    _base_tokens_for,
     _dclm_chunks_for_tokens,
     diversity_val_chunks,
     dclm_heldout_val_chunks,
@@ -104,12 +104,45 @@ MODEL_TYPE = "0.06B"
 CHINCHILLA = 4
 SCHEDULER = "wsd"
 
+# --- Retargeting the same staged sweep at another (size, chinchilla) --------
+# The module is 60M / chinchilla-4 by default, and stays byte-identical unless
+# BOTH overrides are set. With them, the same naming scheme and the same three
+# stages apply to another cell, e.g.
+#
+#   OPTIM_SIZE=30M OPTIM_PTSWEEP_SIZE=30M OPTIM_PTSWEEP_CHINCHILLA=1 \
+#   OPTIM_PTSWEEP_WD=0,0.2,0.3 OPTIM_PTSWEEP_OPTIMIZERS=muon ...
+#
+# OPTIM_SIZE still picks the destination bucket and is still checked against
+# MODEL_TYPE below, so a mismatched pair resolves to zero models rather than
+# writing into another study's bucket.
+_pts_size = os.environ.get("OPTIM_PTSWEEP_SIZE", "").strip()
+_pts_chin = os.environ.get("OPTIM_PTSWEEP_CHINCHILLA", "").strip()
+if _pts_size or _pts_chin:
+    if not (_pts_size and _pts_chin):
+        raise ValueError(
+            "set OPTIM_PTSWEEP_SIZE and OPTIM_PTSWEEP_CHINCHILLA together; "
+            f"got size={_pts_size!r} chinchilla={_pts_chin!r}")
+    from launch_jolmo.sizes import PROFILES as _PTS_PROFILES
+    if _pts_size not in _PTS_PROFILES:
+        raise ValueError(f"OPTIM_PTSWEEP_SIZE={_pts_size!r}; "
+                         f"available: {sorted(_PTS_PROFILES)}")
+    NAME_PREFIX = f"PTSweep{_pts_size}"
+    MODEL_TYPE = _PTS_PROFILES[_pts_size]["model_type"]
+    CHINCHILLA = float(_pts_chin)
+    # Integral budgets keep the historical integer naming (chinchilla-4, not
+    # chinchilla-4.0); fractional ones print as 0.25 / 0.5 like everywhere else.
+    if CHINCHILLA == int(CHINCHILLA):
+        CHINCHILLA = int(CHINCHILLA)
+
 SEQUENCE_LENGTH = 4096
 DEFAULT_GLOBAL_BATCH_SIZE = 1_048_576   # 1M tokens/step — stages 1 & 2 hold this
 DEFAULT_WEIGHT_DECAY = 0.1              # matches SHARED_MODEL_PARAMS in the main matrix
 
-# 20 x 60,030,976 measured params, then x4 for chinchilla-4.
-BASE_TOKENS = BASE_TOKENS_OVERRIDE[MODEL_TYPE]
+# Chinchilla-1 budget for this size, then x CHINCHILLA. Goes through the main
+# matrix's helper instead of indexing the measured-budget dict directly: that
+# dict holds the 0.06B entry only, so a retargeted size raised KeyError. 0.06B
+# still resolves to the same 20 x 60,030,976 through the override inside it.
+BASE_TOKENS = _base_tokens_for(MODEL_TYPE)
 N_TOKENS = BASE_TOKENS * CHINCHILLA
 
 _SIZE, _PROFILE = active_profile()
@@ -127,6 +160,29 @@ VALIDATION_EVAL_INTERVAL = 95
 TRAIN_CHUNKS = _dclm_chunks_for_tokens(N_TOKENS)
 
 _SIZE_OK = _PROFILE["model_type"] == MODEL_TYPE
+
+_pts_wd = os.environ.get("OPTIM_PTSWEEP_WD", "").strip()
+if _pts_wd:
+    SWEEP_WD = [float(x) for x in _pts_wd.replace(",", " ").split()]
+
+_pts_opt = os.environ.get("OPTIM_PTSWEEP_OPTIMIZERS", "").strip()
+if _pts_opt:
+    SWEEP_OPTIMIZERS = [o.strip() for o in _pts_opt.replace(",", " ").split()]
+    bad = [o for o in SWEEP_OPTIMIZERS if o not in ("adamw", "muon")]
+    if bad:
+        raise ValueError(f"OPTIM_PTSWEEP_OPTIMIZERS={bad}; use adamw and/or muon")
+
+if _pts_size or _pts_chin:
+    # BEST_LR_ADAMW / BEST_LR_MUON above are the 60M chinchilla-4 winners. On a
+    # retargeted cell they would silently train the wrong LR, so take the tuned
+    # LR for THIS (size, chinchilla) from the same table every other sweep reads.
+    from launch_jolmo.pretraining_matrix import PT_LR as _PTS_PT_LR
+    _pts_tuned = _PTS_PT_LR.get(SCHEDULER, {})
+    BEST_LR_ADAMW = _pts_tuned.get("adamw", {}).get(CHINCHILLA)
+    BEST_LR_MUON = _pts_tuned.get("muon", {}).get(CHINCHILLA)
+    print(f"[ptsweep] retargeted to {NAME_PREFIX} {MODEL_TYPE} "
+          f"chinchilla-{CHINCHILLA}: tuned adamw={BEST_LR_ADAMW} "
+          f"muon={BEST_LR_MUON}", flush=True)
 
 
 # ---------------------------------------------------------------------------
