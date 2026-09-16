@@ -231,7 +231,6 @@ def plot_size(size, data, ntok, out, split_schema=False, others=None):
     chins = sorted(data)
     if not chins:
         return None
-    table = tuned_lrs(size)
     ncol = min(5, len(chins))
     nrow = -(-len(chins) // ncol)
     fig, axes = plt.subplots(nrow, ncol, figsize=(4.1 * ncol, 3.5 * nrow),
@@ -265,19 +264,9 @@ def plot_size(size, data, ntok, out, split_schema=False, others=None):
                                 zorder=2)
             def _mean(x):
                 return sum(v for _, v in series[x]) / len(series[x])
-            # summary keeps the argmin for the "best-all-sizes" figure; the
-            # RING marks the table's declared LR, so the plot shows the config
-            # every tuned-base analysis actually uses, not the sweep's argmin.
-            summary.setdefault(opt, {})[chin] = (min(lrs, key=_mean),
-                                                 _mean(min(lrs, key=_mean)))
-            blr = table.get(opt, {}).get(chin)
-            if blr is None or not any(abs(x - blr) < 1e-12 for x in lrs):
-                if blr is not None:
-                    print(f"  {size} c{chin:g} {opt}: table LR {blr:g} has no run "
-                          f"at the tuned component -- no ring")
-                continue
-            blr = next(x for x in lrs if abs(x - blr) < 1e-12)
+            blr = min(lrs, key=_mean)
             bval = _mean(blr)
+            summary.setdefault(opt, {})[chin] = (blr, bval)
             ax.scatter([blr], [bval], s=140, facecolors="none",
                        edgecolors=COLOR[opt], linewidths=2.0, zorder=4)
             # adamw label above its marker, muon below: the two optima often sit
@@ -286,8 +275,6 @@ def plot_size(size, data, ntok, out, split_schema=False, others=None):
             ax.annotate(f"{blr:.3g}", (blr, bval), textcoords="offset points",
                         xytext=(0, dy), ha="center", va=va, fontsize=8.5,
                         fontweight="bold", color=COLOR[opt], zorder=5)
-        if others:
-            _draw_others(ax, others.get(chin), fontsize=7.5)
         ax.set_xscale("log")
         # A narrow LR span leaves matplotlib's log minor ticks (2x, 3x, 4x,
         # 6x) close enough to collide into unreadable mush, as on c32. Label
@@ -312,11 +299,7 @@ def plot_size(size, data, ntok, out, split_schema=False, others=None):
                     for s, st in SCHEMA_STYLE.items()]
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=9,
                               markerfacecolor="none", linestyle="none",
-                              label="table LR (PT_LR_BY_MODEL)"))
-    if others and any(others.values()):
-        handles.append(plt.Line2D([], [], color=COLOR["muon"],
-                                  label="muon, other adamw component",
-                                  **OTHER_STYLE))
+                              label="best LR"))
     fig.legend(handles=handles, loc="lower center", ncol=len(handles),
                frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.03))
     tok = f"{min(ntok):,}" if ntok else "?"
@@ -634,8 +617,7 @@ def main():
         all_data[size], all_ntok[size] = data, ntok
         s = plot_size(size, data, ntok,
                       os.path.join(a.out_dir, f"pt-lr-dclm-{size}"),
-                      split_schema=size in (a.split_schema or []),
-                      others=others)
+                      split_schema=size in (a.split_schema or []))
         if s:
             all_summary[size] = s
         ts = table_summary(size, data)
