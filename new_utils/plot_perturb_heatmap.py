@@ -643,11 +643,20 @@ def plot_degradation_vs_loss_combined(raw, out, gamma=0.01, facet="size"):
     else:
         raise ValueError(facet)
 
-    fig, axes = plt.subplots(2, len(keys), figsize=(3.1 * len(keys), 6.2),
+    # Wrap at 5 columns: 9 chinchillas in one row are unreadable. The
+    # absolute block occupies the first `per` rows, the relative block the
+    # next `per`, so "absolute on top, relative below" still holds.
+    ncol = min(5, len(keys))
+    per = -(-len(keys) // ncol)
+    fig, axes = plt.subplots(2 * per, ncol, figsize=(3.3 * ncol, 3.0 * 2 * per),
                              squeeze=False)
+    for j in range(len(keys), per * ncol):          # blank unused cells
+        for blk in range(2):
+            axes[blk * per + j // ncol][j % ncol].axis("off")
     for r, (relative, pts) in enumerate(rows):
-        for c, key in enumerate(keys):
-            ax = axes[r][c]
+        for ci, key in enumerate(keys):
+            ax = axes[r * per + ci // ncol][ci % ncol]
+            c = ci % ncol
             here = [q for q in pts if sel(q, key)]
             for size in SIZES:
                 for opt in ("adamw", "muon"):
@@ -666,19 +675,21 @@ def plot_degradation_vs_loss_combined(raw, out, gamma=0.01, facet="size"):
             ax.set_yscale("log")
             ax.grid(True, which="both", alpha=0.22, linewidth=0.5)
             ax.tick_params(labelsize=7.5, colors=MUTED)
-            if r == 0:
-                ax.set_title(f"{key} ({MODEL_TYPE[key]})" if facet == "size"
-                             else f"chinchilla {key:g}", fontsize=9.5, color=INK)
-            else:
+            ax.set_title((f"{key} ({MODEL_TYPE[key]})" if facet == "size"
+                          else f"chinchilla {key:g}")
+                         + ("" if r == 0 else "  (relative)"),
+                         fontsize=9, color=INK)
+            if r == 1 and ci // ncol == per - 1:
                 ax.set_xlabel("unperturbed DCLM loss", fontsize=8, color=MUTED)
             if c == 0:
                 ax.set_ylabel("relative degradation\n(perturbed − base) / base"
                               if relative else "degradation\nperturbed − base (nats)",
                               fontsize=8.5, color=INK)
-        # Shared y within the row: same limits on every panel of the row.
-        lo = min(ax.get_ylim()[0] for ax in axes[r])
-        hi = max(ax.get_ylim()[1] for ax in axes[r])
-        for ax in axes[r]:
+        # Shared y within the metric block: same limits on every panel.
+        block = [axes[r * per + i // ncol][i % ncol] for i in range(len(keys))]
+        lo = min(ax.get_ylim()[0] for ax in block)
+        hi = max(ax.get_ylim()[1] for ax in block)
+        for ax in block:
             ax.set_ylim(lo, hi)
 
     from matplotlib.patches import Patch
@@ -698,7 +709,7 @@ def plot_degradation_vs_loss_combined(raw, out, gamma=0.01, facet="size"):
     for ext in ("png", "pdf"):
         fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"wrote {out}.png / .pdf  (2 x {len(keys)})")
+    print(f"wrote {out}.png / .pdf  ({2 * per} x {ncol})")
 
 
 def main():
