@@ -244,7 +244,7 @@ def plot_size(size, data, ntok, out, split_schema=False, others=None):
     """One subplot per chinchilla.
 
     By default the two naming schemas are averaged per LR (they are independent
-    runs of the same recipe) with their spread drawn as a vertical bar. With
+    runs of the same recipe). With
     ``split_schema`` each schema becomes its own line — color still carries the
     optimizer, line style carries the schema.
     """
@@ -276,12 +276,6 @@ def plot_size(size, data, ntok, out, split_schema=False, others=None):
                         for x in lrs]
                 ax.plot(lrs, mean, "o-", color=COLOR[opt], markersize=4.5,
                         linewidth=1.6, zorder=3)
-                for x in lrs:
-                    if len(series[x]) > 1:
-                        vals = [v for _, v in series[x]]
-                        ax.plot([x, x], [min(vals), max(vals)],
-                                color=COLOR[opt], linewidth=1.0, alpha=0.55,
-                                zorder=2)
             def _mean(x):
                 return sum(v for _, v in series[x]) / len(series[x])
             blr = min(lrs, key=_mean)
@@ -530,11 +524,6 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                 mean = [sum(v for _, v in series[x]) / len(series[x]) for x in lrs]
                 ax.plot(lrs, mean, "o-", color=COLOR[opt], markersize=3.8,
                         linewidth=1.4, zorder=3)
-                for x in lrs:
-                    if len(series[x]) > 1:
-                        vals = [v for _, v in series[x]]
-                        ax.plot([x, x], [min(vals), max(vals)], color=COLOR[opt],
-                                linewidth=0.9, alpha=0.55, zorder=2)
                 tl = tuned_lrs(size).get(opt, {}).get(chin)
                 ks = [i for i, x in enumerate(lrs) if tl is not None and abs(x - tl) < 1e-12]
                 if not ks:
