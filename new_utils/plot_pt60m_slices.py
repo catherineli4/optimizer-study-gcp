@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 BUCKET = "gs://cmu-gpucloud-catheri4"
 LABEL = "DCLM_heldout"
 COLOR = {"adamw": "#2a78d6", "muon": "#eb6834"}
-INK, MUTED = "#0b0b0b", "#52514e"
+INK, MUTED, RULE = "#0b0b0b", "#52514e", "#8c8b87"
 
 MODEL_TYPE = {"30M": "0.03B", "60M": "0.06B", "100M": "0.1B",
               "300M": "0.3B", "600M": "0.6B"}
@@ -281,39 +281,38 @@ def plot_wd_pinned_all_sizes(sizes, cache_root, out, chinchilla=1.0,
     if not panels:
         print("nothing to plot"); return
 
-    fig, axes = plt.subplots(1, len(panels), figsize=(3.6 * len(panels), 3.6),
-                             squeeze=False, sharex=True)
-    for i, (size, sl) in enumerate(panels):
-        ax = axes[0][i]
-        for spec, pts in sl:
-            xs, ys = [x for x, _ in pts], [y for _, y in pts]
-            ax.plot(xs, ys, "o-", color=COLOR["muon"], linewidth=1.9,
-                    markersize=5.5, zorder=3)
-            # Mark the tuned base (the adamw-pinned default) so the reader
-            # sees which point every other analysis was built on.
-            k = [j for j, x in enumerate(xs) if x == spec["pinned_adamw_wd"]]
-            if k:
-                ax.scatter([xs[k[0]]], [ys[k[0]]], s=140, facecolors="none",
-                           edgecolors=INK, linewidths=1.6, zorder=4)
-            ax.set_title(f"{size}   muon lr {spec['lr']:.2g}, adamw comp "
-                         f"{spec['adamw_component']:.2g}", fontsize=9.5, color=INK)
-        ax.set_xlabel("Muon-group weight decay", fontsize=9, color=MUTED)
-        ax.grid(True, alpha=0.25, linewidth=0.6)
-        ax.tick_params(labelsize=8, colors=MUTED)
-        ax.margins(y=0.2)
-        if i == 0:
-            ax.set_ylabel(f"{LABEL} loss", fontsize=10, color=INK)
-    handles = [plt.Line2D([], [], color=COLOR["muon"], marker="o", markersize=5.5,
-                          linewidth=1.9, label="muon, AdamW-group wd pinned at 0.1"),
-               plt.Line2D([], [], color=INK, marker="o", markersize=9,
-                          markerfacecolor="none", linestyle="none",
-                          label="tuned base (wd 0.1)")]
-    fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False,
-               fontsize=9.5, bbox_to_anchor=(0.5, -0.06))
-    fig.suptitle(f"Held-out DCLM loss vs Muon weight decay at chinchilla "
-                 f"{chinchilla:g}  —  AdamW group (norm gains, lm_head) held at "
-                 f"wd 0.1 in every cell", fontsize=12, color=INK)
-    fig.tight_layout(rect=(0, 0.02, 1, 0.94))
+    # One axis for every size. Absolute losses sit >1 nat apart, which would
+    # flatten each curve to a band, so the y axis is the change relative to
+    # that size's tuned base (wd 0.1): every line passes through zero there
+    # and the slopes are directly comparable. Size is ordered, so the lines
+    # take a single-hue sequential ramp rather than categorical colours.
+    ramp = plt.cm.viridis([0.08, 0.32, 0.56, 0.8, 0.95][:len(panels)])
+    fig, ax = plt.subplots(figsize=(6.8, 4.4))
+    ax.axhline(0, color=RULE, linewidth=1.1, zorder=1)
+    for (size, sl), colour in zip(panels, ramp):
+        spec, pts = sl[0]
+        xs, ys = [x for x, _ in pts], [y for _, y in pts]
+        base = [y for x, y in pts if x == spec["pinned_adamw_wd"]]
+        if not base:
+            print(f"{size}: no wd {spec['pinned_adamw_wd']:g} base point, skipping")
+            continue
+        d = [y - base[0] for y in ys]
+        ax.plot(xs, d, "o-", color=colour, linewidth=1.9, markersize=5.5,
+                zorder=3, label=f"{size}  (muon lr {spec['lr']:.2g})")
+        ax.annotate(f"{d[-1]:+.3f}", (xs[-1], d[-1]), textcoords="offset points",
+                    xytext=(5, 0), ha="left", va="center", fontsize=8,
+                    color=colour)
+    ax.set_xlabel("Muon-group weight decay", fontsize=10, color=MUTED)
+    ax.set_ylabel(f"{LABEL} loss  −  loss at wd 0.1 (tuned base)", fontsize=10,
+                  color=INK)
+    ax.grid(True, alpha=0.25, linewidth=0.6)
+    ax.tick_params(labelsize=8.5, colors=MUTED)
+    ax.margins(x=0.12)
+    ax.legend(frameon=False, fontsize=9, loc="upper left")
+    ax.set_title(f"Muon weight decay at chinchilla {chinchilla:g}, AdamW group "
+                 f"held at wd 0.1  —  change in held-out DCLM loss vs the tuned "
+                 f"base", fontsize=11, color=INK, pad=10)
+    fig.tight_layout()
     for ext in ("png", "pdf"):
         fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
     plt.close(fig)
