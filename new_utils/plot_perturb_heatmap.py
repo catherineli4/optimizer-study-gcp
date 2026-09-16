@@ -703,11 +703,8 @@ def plot_degradation_vs_loss_combined(raw, out, gamma=0.01, facet="size"):
                     for z in SIZES if any(q[0] == z for q in rows[0][1])]
     fig.legend(handles=handles, loc="lower center", ncol=len(handles),
                frameon=False, fontsize=9, bbox_to_anchor=(0.5, -0.015))
-    lab = "chinchilla" if facet == "size" else "size"
-    fig.suptitle(f"Degradation under Gaussian weight perturbation ($\\gamma$ = "
-                 f"{gamma:g}) vs model quality  —  one column per {facet}; "
-                 f"top: absolute, bottom: relative; small label = {lab}",
-                 fontsize=11.5, color=INK)
+    fig.suptitle(f"Absolute & Relative Degradation vs Loss ($\\gamma$ = {gamma:g})",
+                 fontsize=13, color=INK)
     fig.tight_layout(rect=(0, 0.025, 1, 0.955))
     for ext in ("png", "pdf"):
         fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
