@@ -184,12 +184,18 @@ def collect(cache):
     return diffs, raw, sorted(chins)
 
 
-def degradation_diffs(raw):
+def degradation_diffs(raw, relative=False):
     """{gamma: {(size, chinchilla): muon_degradation - adamw_degradation}}.
 
     Degradation is (perturbed - unperturbed) per optimizer, so this isolates
     the ROBUSTNESS difference from the baseline-quality difference: muon starts
     from a lower unperturbed loss, which flatters it in the absolute-loss view.
+
+    relative=True divides each optimizer's degradation by its own unperturbed
+    loss before differencing, and reports the result in PERCENT of that loss.
+    A fixed 0.1-nat rise is a bigger relative hit to a 3.7-nat model than to a
+    4.6-nat one, so this is the fairer cross-size comparison; it is also the
+    same normalisation the tuned-LR tables use when they talk about "x% worse".
     """
     out = {}
     for (g, size, chin, opt), v in raw.items():
@@ -200,7 +206,11 @@ def degradation_diffs(raw):
         a0 = raw.get((None, size, chin, "adamw"))
         if None in (m0, a, a0):
             continue
-        out.setdefault(g, {})[(size, chin)] = (v - m0) - (a - a0)
+        if relative:
+            d = 100.0 * ((v - m0) / m0 - (a - a0) / a0)
+        else:
+            d = (v - m0) - (a - a0)
+        out.setdefault(g, {})[(size, chin)] = d
     return out
 
 
@@ -496,9 +506,27 @@ def main():
          caption="cell = (perturbed - unperturbed) for muon minus the same for "
                  "adamw    |    negative (blue) = muon degrades less    |    "
                  "white = no data")
+    rel = degradation_diffs(raw, relative=True)
+    REL_CAPTION = ("cell = 100 x (perturbed - unperturbed) / unperturbed for muon "
+                   "minus the same for adamw    |    negative (blue) = muon "
+                   "degrades less    |    white = no data")
+    plot(rel, chins,
+         os.path.join(a.out_dir, "perturb-reldegradation-diff-muon-minus-adamw"),
+         title="Relative degradation under Gaussian weight perturbation: "
+               "muon vs adamw",
+         cbar_label="muon - adamw  degradation, % of own unperturbed loss",
+         caption=REL_CAPTION)
+
     # Small-gamma versions: the large sigmas set the colour range for the full
     # figures, leaving the 0.005-0.05 regime nearly uniform. These rescale to it.
     small = [g for g in GAMMAS if g <= 0.02]
+    plot(rel, chins,
+         os.path.join(a.out_dir,
+                      "perturb-reldegradation-diff-muon-minus-adamw-small"),
+         title="Relative degradation under Gaussian weight perturbation: "
+               "muon vs adamw ($\\gamma \\leq 0.02$)",
+         cbar_label="muon - adamw  degradation, % of own unperturbed loss",
+         caption=REL_CAPTION, gammas=small, clip_pct=85)
     plot(diffs, chins, os.path.join(a.out_dir, "perturb-muon-minus-adamw-small"),
          title="Robustness to Gaussian weight perturbation: muon vs adamw "
                "($\\gamma \\leq 0.02$)", gammas=small, clip_pct=85)
