@@ -197,6 +197,19 @@ if _pts_mlrs:
                          "adamw component from; PT_LR has none")
     _comp = BEST_LR_MUON[1]
     SWEEP_LR_MUON = [(float(x), _comp) for x in _pts_mlrs.replace(",", " ").split()]
+# OPTIM_PTSWEEP_ADAMW_COMPS sweeps the adamw COMPONENT of the muon pair while
+# the muon_lr stays at the table's tuned value -- the converse of MUON_LRS.
+_pts_comps = os.environ.get("OPTIM_PTSWEEP_ADAMW_COMPS", "").strip()
+if _pts_comps:
+    if BEST_LR_MUON is None:
+        raise ValueError("OPTIM_PTSWEEP_ADAMW_COMPS needs a tuned muon pair for "
+                         f"{NAME_PREFIX} chinchilla-{CHINCHILLA}; PT_LR has none")
+    if _pts_mlrs:
+        raise ValueError("set only one of OPTIM_PTSWEEP_MUON_LRS / "
+                         "OPTIM_PTSWEEP_ADAMW_COMPS")
+    _mlr = BEST_LR_MUON[0]
+    SWEEP_LR_MUON = [(_mlr, float(x)) for x in _pts_comps.replace(",", " ").split()]
+
 _pts_alrs = os.environ.get("OPTIM_PTSWEEP_ADAMW_LRS", "").strip()
 if _pts_alrs:
     SWEEP_LR_ADAMW = [float(x) for x in _pts_alrs.replace(",", " ").split()]
