@@ -46,7 +46,7 @@ def _patterns(size):
 
 
 def tuned_adamw_lrs(size):
-    """PT_LR_BY_MODEL[model_type]["wsd"]["adamw"] read straight from the source.
+    """Tuned adamw COMPONENT per budget, from PT_LR_BY_MODEL's muon pairs.
 
     Parsed with ast rather than imported: pulling in pretraining_matrix would
     pull in the whole launcher (Project.init, GCS listings) just for a literal.
@@ -62,9 +62,21 @@ def tuned_adamw_lrs(size):
         elif isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
             target = node.targets[0].id
         if target == "PT_LR_BY_MODEL":
-            table = ast.literal_eval(node.value)
-            cells = table.get(MODEL_TYPE[size], {}).get("wsd", {}).get("adamw", {})
-            return {float(k): float(v) for k, v in cells.items()}
+            wsd = ast.literal_eval(node.value).get(MODEL_TYPE[size], {}).get("wsd", {})
+            # The reference is the adamw COMPONENT of the table's tuned muon
+            # pair (muon_lr, adamw_lr) -- that is the component the muon sweep
+            # was run at. The adamw ARM's own tuned LR is a different quantity
+            # that merely coincides with it at most budgets; fall back to it
+            # only for a budget with no muon entry.
+            muon = wsd.get("muon", {})
+            adamw = wsd.get("adamw", {})
+            out = {}
+            for k in set(muon) | set(adamw):
+                if k in muon and isinstance(muon[k], (tuple, list)):
+                    out[float(k)] = float(muon[k][1])
+                elif k in adamw:
+                    out[float(k)] = float(adamw[k])
+            return out
     return {}
 
 
@@ -140,10 +152,16 @@ def sync(size, cache):
 FOREIGN_LEGACY = set()
 
 
-def load(size, d, only_schema=None, tuned_component=None):
+def load(size, d, only_schema=None, tuned_component=None, return_others=False):
     """{chinchilla: {optimizer: {lr: [losses]}}} — a list per LR because the
-    two naming schemas are independent runs of the same recipe."""
-    pats, out, ntok = _patterns(size), {}, set()
+    two naming schemas are independent runs of the same recipe.
+
+    With ``return_others`` also returns {chinchilla: {component: {lr: [..]}}}:
+    the muon runs whose adamw COMPONENT is not the tuned one. They are a
+    different configuration, so they never join the main sweep, but dropping
+    them silently made whole budgets look unswept (30M c1 kept 3 of 9 muon
+    points; 100M c1 kept 1 of 8)."""
+    pats, out, ntok, others = _patterns(size), {}, set(), {}
     for fn in sorted(os.listdir(d)):
         for rx, opt in pats:
             m = rx.match(fn)
@@ -165,6 +183,11 @@ def load(size, d, only_schema=None, tuned_component=None):
                     # whole chinchilla vanish from the figure just because the
                     # table has not been filled in for it yet.
                     if want is not None and abs(float(m.group(3)) - want) > 1e-12:
+                        (others.setdefault(float(m.group(1)), {})
+                               .setdefault(float(m.group(3)), {})
+                               .setdefault(float(m.group(2)), [])
+                               .append((schema, cell["loss"])))
+                        ntok.add(cell["num_tokens"])
                         break
                 (out.setdefault(float(m.group(1)), {})
                     .setdefault(opt, {})
@@ -172,14 +195,32 @@ def load(size, d, only_schema=None, tuned_component=None):
                     .append((schema, cell["loss"])))
                 ntok.add(cell["num_tokens"])
             break
+    if return_others:
+        return out, ntok, others
     return out, ntok
+
+
+OTHER_STYLE = dict(linestyle=(0, (3, 2)), marker="s", markersize=3.6,
+                   linewidth=1.2, alpha=0.6)
+
+
+def _draw_others(ax, others_cell, fontsize=7):
+    """Dashed, lighter muon lines for each non-tuned adamw component."""
+    for comp, series in sorted((others_cell or {}).items()):
+        lrs = sorted(series)
+        mean = [sum(v for _, v in series[x]) / len(series[x]) for x in lrs]
+        ax.plot(lrs, mean, color=COLOR["muon"], zorder=2, **OTHER_STYLE)
+        ax.annotate(f"acomp {comp:.2g}", (lrs[-1], mean[-1]),
+                    textcoords="offset points", xytext=(4, 0), ha="left",
+                    va="center", fontsize=fontsize, color=COLOR["muon"],
+                    alpha=0.75, zorder=2)
 
 
 SCHEMA_STYLE = {"MuonExpt3": dict(linestyle="-", marker="o"),
                 "PTSweep": dict(linestyle="--", marker="^")}
 
 
-def plot_size(size, data, ntok, out, split_schema=False):
+def plot_size(size, data, ntok, out, split_schema=False, others=None):
     """One subplot per chinchilla.
 
     By default the two naming schemas are averaged per LR (they are independent
@@ -234,6 +275,8 @@ def plot_size(size, data, ntok, out, split_schema=False):
             ax.annotate(f"{blr:.3g}", (blr, bval), textcoords="offset points",
                         xytext=(0, dy), ha="center", va=va, fontsize=8.5,
                         fontweight="bold", color=COLOR[opt], zorder=5)
+        if others:
+            _draw_others(ax, others.get(chin), fontsize=7.5)
         ax.set_xscale("log")
         # A narrow LR span leaves matplotlib's log minor ticks (2x, 3x, 4x,
         # 6x) close enough to collide into unreadable mush, as on c32. Label
@@ -259,6 +302,10 @@ def plot_size(size, data, ntok, out, split_schema=False):
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=9,
                               markerfacecolor="none", linestyle="none",
                               label="best LR"))
+    if others and any(others.values()):
+        handles.append(plt.Line2D([], [], color=COLOR["muon"],
+                                  label="muon, other adamw component",
+                                  **OTHER_STYLE))
     fig.legend(handles=handles, loc="lower center", ncol=len(handles),
                frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.03))
     tok = f"{min(ntok):,}" if ntok else "?"
@@ -439,7 +486,7 @@ def plot_best_panels(all_summary, out):
     print(f"wrote {out}.png / .pdf")
 
 
-def plot_grid(all_data, all_ntok, out):
+def plot_grid(all_data, all_ntok, out, all_others=None):
     """Every size x chinchilla LR curve on one page: rows = model size, columns
     = chinchilla. Each cell is the same panel plot_size draws (schema-averaged
     mean per LR, spread bar where both schemas ran it, best LR ringed), so the
@@ -482,6 +529,8 @@ def plot_grid(all_data, all_ntok, out):
                             textcoords="offset points", xytext=(0, dy),
                             ha="center", va=va, fontsize=7, fontweight="bold",
                             color=COLOR[opt], zorder=5)
+            if all_others:
+                _draw_others(ax, all_others.get(size, {}).get(chin), fontsize=6)
             ax.set_xscale("log")
             ax.xaxis.set_minor_formatter(mticker.NullFormatter())
             ax.xaxis.set_major_locator(mticker.LogLocator(numticks=3))
@@ -508,7 +557,11 @@ def plot_grid(all_data, all_ntok, out):
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=8,
                               markerfacecolor="none", linestyle="none",
                               label="best LR (annotated)"))
-    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False,
+    if all_others and any(v for d in all_others.values() for v in d.values()):
+        handles.append(plt.Line2D([], [], color=COLOR["muon"],
+                                  label="muon, other adamw component (dashed)",
+                                  **OTHER_STYLE))
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False,
                fontsize=10, bbox_to_anchor=(0.5, -0.012))
     toks = {t for s in sizes for t in all_ntok.get(s, ())}
     tok = f"{min(toks):,}" if toks else "?"
@@ -543,7 +596,7 @@ def main():
     a = p.parse_args()
 
     os.makedirs(a.out_dir, exist_ok=True)
-    all_summary, all_table, all_data, all_ntok = {}, {}, {}, {}
+    all_summary, all_table, all_data, all_ntok, all_others = {}, {}, {}, {}, {}
     for size in a.sizes:
         d = (os.path.join(a.cache, size) if a.no_sync
              else sync(size, a.cache))
@@ -552,7 +605,9 @@ def main():
             continue
         keep = "PTSweep" if size in FOREIGN_LEGACY and not a.mix_legacy else None
         tc = None if a.all_components else tuned_adamw_lrs(size)
-        data, ntok = load(size, d, only_schema=keep, tuned_component=tc)
+        data, ntok, others = load(size, d, only_schema=keep, tuned_component=tc,
+                                  return_others=True)
+        all_others[size] = others
         if keep:
             print(f"{size}: using {keep}-named runs only "
                   f"(MuonExpt3 at {size} is a different recipe)")
@@ -564,13 +619,15 @@ def main():
         all_data[size], all_ntok[size] = data, ntok
         s = plot_size(size, data, ntok,
                       os.path.join(a.out_dir, f"pt-lr-dclm-{size}"),
-                      split_schema=size in (a.split_schema or []))
+                      split_schema=size in (a.split_schema or []),
+                      others=others)
         if s:
             all_summary[size] = s
         ts = table_summary(size, data)
         if ts:
             all_table[size] = ts
-    plot_grid(all_data, all_ntok, os.path.join(a.out_dir, "pt-lr-dclm-grid"))
+    plot_grid(all_data, all_ntok, os.path.join(a.out_dir, "pt-lr-dclm-grid"),
+              all_others=all_others)
     plot_best(all_summary, os.path.join(a.out_dir, "pt-lr-dclm-best-all-sizes"))
     plot_best_combined(all_summary,
                        os.path.join(a.out_dir, "pt-lr-dclm-best-combined"),
