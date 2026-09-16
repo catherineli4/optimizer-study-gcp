@@ -1,4 +1,4 @@
-"""PTSweep60M: held-out DCLM loss against ONE hyperparameter, everything else fixed.
+"""PTSweep<size>: held-out DCLM loss against ONE hyperparameter, everything else fixed.
 
 The 60M sweep is the only size that varies weight decay and batch size as well
 as chinchilla and learning rate, so it is the only place a clean one-at-a-time
@@ -13,7 +13,7 @@ Axes: chinchilla, lr (the swept LR: adamw_lr for adamw, muon_lr for muon),
 weight_decay, batch_size.
 
     python -m new_utils.plot_pt60m_slices
-    python -m new_utils.plot_pt60m_slices --axis weight_decay --min-points 3
+    python -m new_utils.plot_pt60m_slices --size 30M --axis weight_decay --min-points 3
 """
 
 import argparse
@@ -32,39 +32,45 @@ LABEL = "DCLM_heldout"
 COLOR = {"adamw": "#2a78d6", "muon": "#eb6834"}
 INK, MUTED = "#0b0b0b", "#52514e"
 
-# One eval JSON per run. The muon name carries BOTH LRs; muon_lr is the swept
-# one and adamw_lr is the component, which must be part of the held-fixed key or
-# a "muon LR sweep" would silently mix component settings.
-PAT = {
-    "adamw": re.compile(
-        r"^PTSweep60M-0\.06B-chinchilla-([0-9.]+)-adamw-lr([0-9.e+\-]+)"
-        r"-wd([0-9.]+)-bs(\d+M)-wsd-eval\.json$"),
-    "muon": re.compile(
-        r"^PTSweep60M-0\.06B-chinchilla-([0-9.]+)-muon-muonlr([0-9.e+\-]+)"
-        r"-adamwlr([0-9.e+\-]+)-wd([0-9.]+)-bs(\d+M)-wsd-eval\.json$"),
-}
+MODEL_TYPE = {"30M": "0.03B", "60M": "0.06B", "100M": "0.1B",
+              "300M": "0.3B", "600M": "0.6B"}
+
+
+def patterns(size):
+    """One eval JSON per run. The muon name carries BOTH LRs; muon_lr is the
+    swept one and adamw_lr is the component, which must be part of the held-fixed
+    key or a "muon LR sweep" would silently mix component settings."""
+    mt = re.escape(MODEL_TYPE[size])
+    return {
+        "adamw": re.compile(
+            rf"^PTSweep{size}-{mt}-chinchilla-([0-9.]+)-adamw-lr([0-9.e+\-]+)"
+            rf"-wd([0-9.]+)-bs(\d+M)-wsd-eval\.json$"),
+        "muon": re.compile(
+            rf"^PTSweep{size}-{mt}-chinchilla-([0-9.]+)-muon-muonlr([0-9.e+\-]+)"
+            rf"-adamwlr([0-9.e+\-]+)-wd([0-9.]+)-bs(\d+M)-wsd-eval\.json$"),
+    }
 
 AXES = ["chinchilla", "lr", "weight_decay", "batch_size"]
 # Batch size is ordinal, not numeric-in-the-same-units as the rest.
 BS_ORDER = {"1M": 1.0, "2M": 2.0, "4M": 4.0}
 
 
-def sync(cache):
+def sync(cache, size):
     os.makedirs(cache, exist_ok=True)
     subprocess.run(
         ["gsutil", "-m", "rsync",
          "-x", r".*-CPT-.*|.*-EWC-.*|.*_perturbed_.*|.*-typo-.*",
-         f"{BUCKET}/Optim-60M-tuning/ModelEvaluation/", cache],
+         f"{BUCKET}/Optim-{size}-tuning/ModelEvaluation/", cache],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return cache
 
 
-def load(cache):
+def load(cache, size):
     """[{optimizer, chinchilla, lr, adamw_component, weight_decay, batch_size,
          loss, num_tokens, name}]"""
-    runs = []
+    runs, pats = [], patterns(size)
     for fn in sorted(os.listdir(cache)):
-        for opt, rx in PAT.items():
+        for opt, rx in pats.items():
             m = rx.match(fn)
             if not m:
                 continue
@@ -128,7 +134,7 @@ def _label(spec, axis):
     return "  ".join(bits)
 
 
-def plot_axis(runs, axis, out, min_points=3, max_lines=14):
+def plot_axis(runs, axis, out, size, min_points=3, max_lines=14):
     sl = slices(runs, axis, min_points)
     if not sl:
         print(f"{axis}: no slice with >= {min_points} points, skipping")
@@ -138,9 +144,13 @@ def plot_axis(runs, axis, out, min_points=3, max_lines=14):
     sl.sort(key=lambda t: -len(t[1]))
     sl = sl[:max_lines]
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.6), squeeze=False,
-                             sharey=True)
-    for c, opt in enumerate(("adamw", "muon")):
+    # Only optimizers that actually have a slice on this axis. 30M sweeps wd for
+    # muon alone, and an empty adamw panel would take half the figure.
+    opts = [o for o in ("adamw", "muon")
+            if any(spec["optimizer"] == o for spec, _ in sl)]
+    fig, axes = plt.subplots(1, len(opts), figsize=(6.25 * len(opts), 4.6),
+                             squeeze=False, sharey=True)
+    for c, opt in enumerate(opts):
         ax = axes[0][c]
         mine = [(s, p) for s, p in sl if s["optimizer"] == opt]
         cmap = plt.cm.viridis
@@ -156,7 +166,7 @@ def plot_axis(runs, axis, out, min_points=3, max_lines=14):
             ax.set_xticks(list(BS_ORDER.values()))
             ax.set_xticklabels(list(BS_ORDER))
             ax.minorticks_off()
-        ax.set_title(f"60M — {opt}", fontsize=11, color=INK)
+        ax.set_title(f"{size} — {opt}", fontsize=11, color=INK)
         ax.set_xlabel(axis.replace("_", " "), fontsize=9.5, color=MUTED)
         ax.grid(True, alpha=0.25, linewidth=0.6)
         ax.tick_params(labelsize=8, colors=MUTED)
@@ -166,7 +176,7 @@ def plot_axis(runs, axis, out, min_points=3, max_lines=14):
         if c == 0:
             ax.set_ylabel(f"{LABEL} loss", fontsize=10, color=INK)
 
-    fig.suptitle(f"PTSweep60M: held-out DCLM loss vs {axis.replace('_', ' ')}"
+    fig.suptitle(f"PTSweep{size}: held-out DCLM loss vs {axis.replace('_', ' ')}"
                  f"   —   every other hyperparameter held constant per line",
                  fontsize=12.5, color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
@@ -179,7 +189,9 @@ def plot_axis(runs, axis, out, min_points=3, max_lines=14):
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
-    p.add_argument("--cache", default="/mnt/localssd/pt-eval-cache/60M")
+    p.add_argument("--size", default="60M", choices=list(MODEL_TYPE))
+    p.add_argument("--cache", default=None,
+                   help="default /mnt/localssd/pt-eval-cache/<size>")
     p.add_argument("--out-dir", default=os.path.join(repo, "colm-moss-latex"))
     p.add_argument("--axis", choices=AXES + ["all"], default="all")
     p.add_argument("--min-points", type=int, default=3)
@@ -190,10 +202,12 @@ def main():
                    help="plot runs evaluated on a different held-out set anyway")
     a = p.parse_args()
 
+    if a.cache is None:
+        a.cache = f"/mnt/localssd/pt-eval-cache/{a.size}"
     if not a.no_sync:
-        sync(a.cache)
-    runs = load(a.cache)
-    print(f"{len(runs)} PTSweep60M runs with a {LABEL} loss")
+        sync(a.cache, a.size)
+    runs = load(a.cache, a.size)
+    print(f"{len(runs)} PTSweep{a.size} runs with a {LABEL} loss")
     # DCLM_heldout is meant to be DCLM_HELDOUT_INSTANCES(1024) x 4096 tokens.
     # A handful of runs were evaluated against a larger held-out set, and their
     # losses are NOT comparable with the rest -- six of them are weight-decay
@@ -212,8 +226,9 @@ def main():
     os.makedirs(a.out_dir, exist_ok=True)
     for axis in (AXES if a.axis == "all" else [a.axis]):
         plot_axis(runs, axis,
-                  os.path.join(a.out_dir, f"pt60m-dclm-vs-{axis}"),
-                  min_points=a.min_points)
+                  os.path.join(a.out_dir,
+                               f"pt{a.size.lower()}-dclm-vs-{axis}"),
+                  a.size, min_points=a.min_points)
 
 
 if __name__ == "__main__":
