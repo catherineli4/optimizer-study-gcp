@@ -42,6 +42,15 @@ def patterns(size):
     key or a "muon LR sweep" would silently mix component settings."""
     mt = re.escape(MODEL_TYPE[size])
     return {
+        # MuonExpt3 schema: same recipe, no wd/bs tags (= wd 0.1, bs 1M). Used
+        # as a FALLBACK for a config with no PTSweep run, so a tuned base that
+        # only exists under this name can still anchor a sweep built on it.
+        "legacy-adamw": re.compile(
+            rf"^MuonExpt3-{mt}-chinchilla-([0-9.]+)-adamw-lr([0-9.e+\-]+)"
+            rf"-wsd-eval\.json$"),
+        "legacy-muon": re.compile(
+            rf"^MuonExpt3-{mt}-chinchilla-([0-9.]+)-muon-muonlr([0-9.e+\-]+)"
+            rf"-adamwlr([0-9.e+\-]+)-wsd-eval\.json$"),
         "adamw": re.compile(
             rf"^PTSweep{size}-{mt}-chinchilla-([0-9.]+)-adamw-lr([0-9.e+\-]+)"
             rf"-wd([0-9.]+)-bs(\d+M)-wsd-eval\.json$"),
@@ -76,9 +85,9 @@ def sync(cache, size):
 def load(cache, size):
     """[{optimizer, chinchilla, lr, adamw_component, weight_decay, batch_size,
          loss, num_tokens, name}]"""
-    runs, pats = [], patterns(size)
+    runs, legacy, pats = [], [], patterns(size)
     for fn in sorted(os.listdir(cache)):
-        for opt, rx in pats.items():
+        for kind, rx in pats.items():
             m = rx.match(fn)
             if not m:
                 continue
@@ -87,6 +96,12 @@ def load(cache, size):
             if not cell:
                 break
             g = m.groups()
+            is_legacy = kind.startswith("legacy-")
+            opt = kind.replace("legacy-", "")
+            if is_legacy:
+                # Re-shape to the PTSweep group layout: (chin, lr[, comp], wd, bs)
+                g = (g[0], g[1], "0.1", "1M") if opt == "adamw" \
+                    else (g[0], g[1], g[2], "0.1", None, "1M")
             if opt == "adamw":
                 chin, lr, wd, bs = float(g[0]), float(g[1]), float(g[2]), g[3]
                 comp, adamw_wd, tagged = None, wd, False
@@ -99,12 +114,27 @@ def load(cache, size):
                 # the adamw group at adamw_wd.
                 wd = float(g[4]) if tagged else adamw_wd
                 bs = g[5]
-            runs.append(dict(optimizer=opt, chinchilla=chin, lr=lr,
-                             adamw_component=comp, weight_decay=wd,
-                             adamw_wd=adamw_wd, muon_only=tagged,
-                             batch_size=bs, loss=cell["loss"],
-                             num_tokens=cell["num_tokens"], name=fn))
+            rec = dict(optimizer=opt, chinchilla=chin, lr=lr,
+                       adamw_component=comp, weight_decay=wd,
+                       adamw_wd=adamw_wd, muon_only=tagged,
+                       batch_size=bs, loss=cell["loss"],
+                       num_tokens=cell["num_tokens"], name=fn)
+            (legacy if is_legacy else runs).append(rec)
             break
+    # Fallback only: a legacy run fills a config that has no PTSweep run. Where
+    # both exist they are independent runs of one recipe, and the PTSweep one
+    # is the artifact the sweeps were actually built on, so it wins outright
+    # rather than being averaged with the legacy value.
+    have = {(r["optimizer"], r["chinchilla"], r["lr"], r["adamw_component"],
+             r["weight_decay"], r["adamw_wd"], r["batch_size"]) for r in runs}
+    added = 0
+    for r in legacy:
+        k = (r["optimizer"], r["chinchilla"], r["lr"], r["adamw_component"],
+             r["weight_decay"], r["adamw_wd"], r["batch_size"])
+        if k not in have:
+            runs.append(r); have.add(k); added += 1
+    if added:
+        print(f"  +{added} MuonExpt3-named run(s) used as wd0.1/bs1M fallback")
     return runs
 
 
