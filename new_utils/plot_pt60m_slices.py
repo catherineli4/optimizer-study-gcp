@@ -58,7 +58,12 @@ BS_ORDER = {"1M": 1.0, "2M": 2.0, "4M": 4.0}
 def sync(cache, size):
     os.makedirs(cache, exist_ok=True)
     subprocess.run(
-        ["gsutil", "-m", "rsync",
+        # -d makes the cache a true mirror. Without it a deletion on GCS never
+        # propagates, so an eval that was removed as invalid keeps being plotted
+        # from the stale local copy -- which is how a pre-fix wd=0.2 loss
+        # survived into the figure after its GCS object was gone. The -x
+        # patterns are applied to both sides, so excluded files are not deleted.
+        ["gsutil", "-m", "rsync", "-d",
          "-x", r".*-CPT-.*|.*-EWC-.*|.*_perturbed_.*|.*-typo-.*",
          f"{BUCKET}/Optim-{size}-tuning/ModelEvaluation/", cache],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
