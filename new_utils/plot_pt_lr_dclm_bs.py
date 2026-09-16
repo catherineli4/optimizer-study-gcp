@@ -205,7 +205,7 @@ def write_table(size, data, out):
     print(f"wrote {out}.png / .pdf")
 
 
-def plot_grid(all_data, all_ntok, out):
+def plot_grid(all_data, all_ntok, out, chin_range=(1.0, 4.0)):
     """Every size on one page: rows = (size, optimizer), columns = chinchilla,
     one line per global batch size in each cell -- the same panel plot() draws,
     built from the same loaded data. Only chinchillas with more than one batch
@@ -216,8 +216,9 @@ def plot_grid(all_data, all_ntok, out):
     rows = []
     for size in sizes:
         chins = [c for c in sorted(all_data[size])
-                 if any(len(all_data[size][c].get(o, {})) > 1
-                        for o in ("adamw", "muon"))]
+                 if chin_range[0] <= c <= chin_range[1]
+                 and any(len(all_data[size][c].get(o, {})) > 1
+                         for o in ("adamw", "muon"))]
         if chins:
             for opt in ("adamw", "muon"):
                 rows.append((size, opt, chins))
@@ -274,7 +275,8 @@ def plot_grid(all_data, all_ntok, out):
     toks = {t for s in sizes for t in all_ntok.get(s, ())}
     tok = f"{min(toks):,}" if toks else "?"
     fig.suptitle(f"Pretrain LR vs held-out DCLM loss across global batch size, "
-                 f"every size x token budget (wd 0.1)  —  {tok} eval tokens/point",
+                 f"chinchilla {chin_range[0]:g}–{chin_range[1]:g} (wd 0.1)  —  "
+                 f"{tok} eval tokens/point",
                  fontsize=13, color=INK)
     fig.tight_layout(rect=(0, 0.02, 1, 0.975))
     for ext in ("png", "pdf"):
@@ -287,6 +289,9 @@ def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
     p.add_argument("--sizes", nargs="+", default=["30M", "60M", "100M", "600M"])
+    p.add_argument("--grid-chinchillas", nargs=2, type=float, default=[1, 4],
+                   metavar=("LO", "HI"),
+                   help="chinchilla range shown in the combined grid (default 1 4)")
     p.add_argument("--refresh", action="store_true",
                    help="re-list GCS instead of using the cached names_<size>.txt")
     p.add_argument("--cache", default="/mnt/localssd/bscache")
@@ -309,7 +314,8 @@ def main():
         plot(size, data, ntok, os.path.join(a.out_dir, f"pt-lr-dclm-bs-{size}"))
         write_table(size, data,
                     os.path.join(a.out_dir, f"pt-lr-dclm-bs-{size}-besttable"))
-    plot_grid(all_data, all_ntok, os.path.join(a.out_dir, "pt-lr-dclm-bs-grid"))
+    plot_grid(all_data, all_ntok, os.path.join(a.out_dir, "pt-lr-dclm-bs-grid"),
+              chin_range=tuple(a.grid_chinchillas))
 
 
 if __name__ == "__main__":
