@@ -69,20 +69,46 @@ def fetch(size, names, cache):
     return d
 
 
-def load(size, cache):
-    """{chinchilla: {optimizer: {batch: {lr: loss}}}}"""
+def load(size, cache, main_cache="/mnt/localssd/evalcache", sync_main=True):
+    """{chinchilla: {optimizer: {batch: {lr: loss}}}}
+
+    The batch-1M series is taken from plot_pt_lr_dclm_all.load VERBATIM -- both
+    naming schemas, the tuned-adamw-component filter for muon, the per-LR
+    schema mean, EXCLUDE and SKIP_CELLS -- so the 1M points here are the same
+    points, by construction, as the size x chinchilla grid. The 2M/4M runs
+    exist only under the PTSweep schema and each (chinchilla, batch) was run
+    at a single adamw component, so they need no filter; they get the same
+    per-LR mean (never the min) and the same exclusions.
+    """
+    from new_utils import plot_pt_lr_dclm_all as A
+    out, ntok = {}, set()
+
+    # --- batch 1M: the main grid's own loader ---------------------------------
+    d1 = (A.sync(size, main_cache) if sync_main
+          else os.path.join(main_cache, size))
+    main, ntok1 = A.load(size, d1, tuned_component=A.tuned_adamw_lrs(size))
+    ntok |= ntok1
+    for chin, per_opt in main.items():
+        for opt, series in per_opt.items():
+            out.setdefault(chin, {}).setdefault(opt, {})["1M"] = {
+                lr: sum(v for _, v in runs) / len(runs)
+                for lr, runs in series.items()}
+
+    # --- batches 2M / 4M: PTSweep names, same rules -----------------------------
     pats = patterns(size)
     hits = []
     for n in listing(size, cache):
         for rx, opt in pats:
             m = rx.match(n)
-            if m:
+            if m and m.group(3) != "1M":
                 hits.append((n, opt, float(m.group(1)), float(m.group(2)),
                              m.group(3)))
                 break
     d = fetch(size, [h[0] for h in hits], cache)
-    out, ntok = {}, set()
+    acc = {}
     for n, opt, chin, lr, bs in hits:
+        if (size, chin) in A.SKIP_CELLS or (size, chin, opt, lr) in A.EXCLUDE:
+            continue
         p = os.path.join(d, n + "-eval.json")
         if not os.path.exists(p):
             continue
@@ -91,14 +117,11 @@ def load(size, cache):
         except (json.JSONDecodeError, OSError):
             continue
         if cell:
-            # KEEP THE MINIMUM, never overwrite. A muon cell can have several
-            # runs at the same muon_lr with different adamw components; plain
-            # assignment let whichever was read last win, which reported a
-            # non-optimal LR as "best".
-            slot = out.setdefault(chin, {}).setdefault(opt, {}).setdefault(bs, {})
-            if lr not in slot or cell["loss"] < slot[lr]:
-                slot[lr] = cell["loss"]
+            acc.setdefault((chin, opt, bs), {}).setdefault(lr, []).append(cell["loss"])
             ntok.add(cell["num_tokens"])
+    for (chin, opt, bs), series in acc.items():
+        out.setdefault(chin, {}).setdefault(opt, {})[bs] = {
+            lr: sum(v) / len(v) for lr, v in series.items()}
     return out, ntok
 
 

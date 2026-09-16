@@ -132,7 +132,10 @@ def sync(size, cache):
     d = os.path.join(cache, size)
     os.makedirs(d, exist_ok=True)
     subprocess.run(
-        ["gsutil", "-m", "rsync", "-x", r".*-CPT-.*|.*-EWC-.*|.*_perturbed_.*|.*-typo-.*",
+        # -d so an eval deleted on GCS leaves the mirror too; the -x patterns
+        # apply to both sides, so excluded files are never deleted locally.
+        ["gsutil", "-m", "rsync", "-d",
+         "-x", r".*-CPT-.*|.*-EWC-.*|.*_perturbed_.*|.*-typo-.*",
          f"{BUCKET}/Optim-{size}-tuning/ModelEvaluation/", d],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return d
