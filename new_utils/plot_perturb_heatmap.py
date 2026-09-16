@@ -613,6 +613,94 @@ def plot_degradation_vs_loss(raw, out, gamma=0.01, relative=False, facet=None):
     print(f"wrote {out}.png / .pdf  ({len(pts)} points)")
 
 
+def plot_degradation_vs_loss_combined(raw, out, gamma=0.01, facet="size"):
+    """Two rows sharing the facet columns: absolute degradation on top,
+    relative (divided by the unperturbed loss) below. Each row has its own
+    shared log-y; x is free per column, since the loss range moves with size.
+    """
+    def collect(relative):
+        pts = []
+        for (g, size, chin, opt), v in raw.items():
+            if g is None or abs(g - gamma) > 1e-12:
+                continue
+            base = raw.get((None, size, chin, opt))
+            if base is None or (size, chin, opt) in VS_LOSS_EXCLUDE:
+                continue
+            d = (v - base) / base if relative else v - base
+            if d > 0:
+                pts.append((size, chin, opt, base, d))
+        return pts
+    rows = [(False, collect(False)), (True, collect(True))]
+    if not rows[0][1]:
+        print(f"no points at gamma {gamma:g}")
+        return
+    if facet == "size":
+        keys = [z for z in SIZES if any(q[0] == z for q in rows[0][1])]
+        label_key, sel = 1, (lambda q, k: q[0] == k)
+    elif facet == "chinchilla":
+        keys = sorted({q[1] for q in rows[0][1]})
+        label_key, sel = 0, (lambda q, k: q[1] == k)
+    else:
+        raise ValueError(facet)
+
+    fig, axes = plt.subplots(2, len(keys), figsize=(3.1 * len(keys), 6.2),
+                             squeeze=False)
+    for r, (relative, pts) in enumerate(rows):
+        for c, key in enumerate(keys):
+            ax = axes[r][c]
+            here = [q for q in pts if sel(q, key)]
+            for size in SIZES:
+                for opt in ("adamw", "muon"):
+                    s_ = [q for q in here if q[0] == size and q[2] == opt]
+                    if s_:
+                        ax.scatter([q[3] for q in s_], [q[4] for q in s_], s=44,
+                                   marker=SIZE_MARKER[size], color=OPT_COLOR[opt],
+                                   edgecolors="white", linewidths=0.6, alpha=0.9,
+                                   zorder=3)
+            for q in here:
+                lab = q[label_key]
+                ax.annotate(f"{lab:g}" if isinstance(lab, float) else lab,
+                            (q[3], q[4]), textcoords="offset points",
+                            xytext=(4, 3), fontsize=6, color=OPT_COLOR[q[2]],
+                            alpha=0.8)
+            ax.set_yscale("log")
+            ax.grid(True, which="both", alpha=0.22, linewidth=0.5)
+            ax.tick_params(labelsize=7.5, colors=MUTED)
+            if r == 0:
+                ax.set_title(f"{key} ({MODEL_TYPE[key]})" if facet == "size"
+                             else f"chinchilla {key:g}", fontsize=9.5, color=INK)
+            else:
+                ax.set_xlabel("unperturbed DCLM loss", fontsize=8, color=MUTED)
+            if c == 0:
+                ax.set_ylabel("relative degradation\n(perturbed − base) / base"
+                              if relative else "degradation\nperturbed − base (nats)",
+                              fontsize=8.5, color=INK)
+        # Shared y within the row: same limits on every panel of the row.
+        lo = min(ax.get_ylim()[0] for ax in axes[r])
+        hi = max(ax.get_ylim()[1] for ax in axes[r])
+        for ax in axes[r]:
+            ax.set_ylim(lo, hi)
+
+    from matplotlib.patches import Patch
+    handles = [Patch(color=OPT_COLOR[o], label=o) for o in ("adamw", "muon")]
+    if facet != "size":
+        handles += [plt.Line2D([], [], color=MUTED, marker=SIZE_MARKER[z],
+                               linestyle="none", markersize=6.5, label=z)
+                    for z in SIZES if any(q[0] == z for q in rows[0][1])]
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+               frameon=False, fontsize=9, bbox_to_anchor=(0.5, -0.015))
+    lab = "chinchilla" if facet == "size" else "size"
+    fig.suptitle(f"Degradation under Gaussian weight perturbation ($\\gamma$ = "
+                 f"{gamma:g}) vs model quality  —  one column per {facet}; "
+                 f"top: absolute, bottom: relative; small label = {lab}",
+                 fontsize=11.5, color=INK)
+    fig.tight_layout(rect=(0, 0.025, 1, 0.955))
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf  (2 x {len(keys)})")
+
+
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
@@ -682,6 +770,11 @@ def main():
                               ("chinchilla", "-by-chinchilla")):
             plot_degradation_vs_loss(raw, os.path.join(a.out_dir, stem + suffix),
                                      gamma=0.01, relative=rel, facet=facet)
+
+    for facet in ("size", "chinchilla"):
+        plot_degradation_vs_loss_combined(
+            raw, os.path.join(a.out_dir, f"perturb-degradation-vs-loss-g0.01-by-{facet}-combined"),
+            gamma=0.01, facet=facet)
 
     plot_curves_vs_size(raw, os.path.join(a.out_dir, "perturb-loss-vs-size"))
     plot_curves_vs_size(raw, os.path.join(a.out_dir, "perturb-degradation-vs-size"),
