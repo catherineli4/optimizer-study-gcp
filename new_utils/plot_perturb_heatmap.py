@@ -677,13 +677,13 @@ def plot_degradation_vs_loss_combined(raw, out, gamma=0.01, facet="size"):
             ax.tick_params(labelsize=7.5, colors=MUTED)
             ax.set_title((f"{key} ({MODEL_TYPE[key]})" if facet == "size"
                           else f"chinchilla {key:g}")
-                         + ("" if r == 0 else "  (relative)"),
+                         + ("  (absolute)" if r == 0 else "  (relative)"),
                          fontsize=9, color=INK)
             if r == 1 and ci // ncol == per - 1:
                 ax.set_xlabel("unperturbed DCLM loss", fontsize=8, color=MUTED)
             if c == 0:
                 ax.set_ylabel("relative degradation\n(perturbed − base) / base"
-                              if relative else "degradation\nperturbed − base (nats)",
+                              if relative else "absolute degradation\nperturbed − base (nats)",
                               fontsize=8.5, color=INK)
         # Shared y within the metric block: same limits on every panel.
         block = [axes[r * per + i // ncol][i % ncol] for i in range(len(keys))]
