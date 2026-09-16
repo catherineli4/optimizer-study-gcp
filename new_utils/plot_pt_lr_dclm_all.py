@@ -439,6 +439,89 @@ def plot_best_panels(all_summary, out):
     print(f"wrote {out}.png / .pdf")
 
 
+def plot_grid(all_data, all_ntok, out):
+    """Every size x chinchilla LR curve on one page: rows = model size, columns
+    = chinchilla. Each cell is the same panel plot_size draws (schema-averaged
+    mean per LR, spread bar where both schemas ran it, best LR ringed), so the
+    per-size figures and this grid can never disagree. Axes are independent
+    per cell: loss levels differ by >1 nat across sizes and the swept LR range
+    moves with size, so a shared scale would flatten every curve.
+    """
+    sizes = [s for s in MODEL_TYPE if s in all_data]   # MODEL_TYPE is size-ordered
+    chins = sorted({c for s in sizes for c in all_data[s]})
+    if not sizes or not chins:
+        return
+    fig, axes = plt.subplots(len(sizes), len(chins),
+                             figsize=(2.9 * len(chins), 2.6 * len(sizes)),
+                             squeeze=False)
+    for r, size in enumerate(sizes):
+        for c, chin in enumerate(chins):
+            ax = axes[r][c]
+            cell = all_data[size].get(chin)
+            if not cell:
+                ax.axis("off")
+                continue
+            for opt in ("adamw", "muon"):
+                series = cell.get(opt)
+                if not series:
+                    continue
+                lrs = sorted(series)
+                mean = [sum(v for _, v in series[x]) / len(series[x]) for x in lrs]
+                ax.plot(lrs, mean, "o-", color=COLOR[opt], markersize=3.8,
+                        linewidth=1.4, zorder=3)
+                for x in lrs:
+                    if len(series[x]) > 1:
+                        vals = [v for _, v in series[x]]
+                        ax.plot([x, x], [min(vals), max(vals)], color=COLOR[opt],
+                                linewidth=0.9, alpha=0.55, zorder=2)
+                k = min(range(len(lrs)), key=lambda i: mean[i])
+                ax.scatter([lrs[k]], [mean[k]], s=95, facecolors="none",
+                           edgecolors=COLOR[opt], linewidths=1.7, zorder=4)
+                dy, va = ((10, "bottom") if opt == "adamw" else (-12, "top"))
+                ax.annotate(f"{lrs[k]:.2g}", (lrs[k], mean[k]),
+                            textcoords="offset points", xytext=(0, dy),
+                            ha="center", va=va, fontsize=7, fontweight="bold",
+                            color=COLOR[opt], zorder=5)
+            ax.set_xscale("log")
+            ax.xaxis.set_minor_formatter(mticker.NullFormatter())
+            ax.xaxis.set_major_locator(mticker.LogLocator(numticks=3))
+            ax.xaxis.set_major_formatter(mticker.LogFormatterSciNotation())
+            ax.grid(True, alpha=0.25, linewidth=0.5)
+            ax.tick_params(labelsize=6.5, colors=MUTED)
+            ax.margins(y=0.24)
+            if r == 0:
+                ax.set_title(f"chinchilla {chin:g}", fontsize=10, color=INK)
+            if c == 0:
+                ax.set_ylabel(f"{size} ({MODEL_TYPE[size]})\n{LABEL} loss",
+                              fontsize=9, color=INK)
+            if r == len(sizes) - 1:
+                ax.set_xlabel("swept LR", fontsize=8, color=MUTED)
+    # Row labels must survive when a row's first cells are blank (300M/600M
+    # have no small-chinchilla runs): put the size on the first VISIBLE cell.
+    for r, size in enumerate(sizes):
+        first = next((c for c, chin in enumerate(chins) if all_data[size].get(chin)), None)
+        if first not in (None, 0):
+            axes[r][first].set_ylabel(f"{size} ({MODEL_TYPE[size]})\n{LABEL} loss",
+                                      fontsize=9, color=INK)
+    handles = [plt.Line2D([], [], color=COLOR[o], marker="o", markersize=4,
+                          linewidth=1.4, label=o) for o in ("adamw", "muon")]
+    handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=8,
+                              markerfacecolor="none", linestyle="none",
+                              label="best LR (annotated)"))
+    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False,
+               fontsize=10, bbox_to_anchor=(0.5, -0.012))
+    toks = {t for s in sizes for t in all_ntok.get(s, ())}
+    tok = f"{min(toks):,}" if toks else "?"
+    fig.suptitle(f"Pretrain LR vs held-out DCLM loss, every size x token budget "
+                 f"(wd 0.1, batch 1M)  —  {tok} eval tokens per point",
+                 fontsize=14, color=INK)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.97))
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf  ({len(sizes)} x {len(chins)} grid)")
+
+
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
@@ -460,7 +543,7 @@ def main():
     a = p.parse_args()
 
     os.makedirs(a.out_dir, exist_ok=True)
-    all_summary, all_table = {}, {}
+    all_summary, all_table, all_data, all_ntok = {}, {}, {}, {}
     for size in a.sizes:
         d = (os.path.join(a.cache, size) if a.no_sync
              else sync(size, a.cache))
@@ -478,6 +561,7 @@ def main():
         cells = sum(len(v) for c in data.values() for v in c.values())
         print(f"{size}: {runs} runs ({cells} distinct LR cells) over "
               f"{len(data)} chinchilla(s)")
+        all_data[size], all_ntok[size] = data, ntok
         s = plot_size(size, data, ntok,
                       os.path.join(a.out_dir, f"pt-lr-dclm-{size}"),
                       split_schema=size in (a.split_schema or []))
@@ -486,6 +570,7 @@ def main():
         ts = table_summary(size, data)
         if ts:
             all_table[size] = ts
+    plot_grid(all_data, all_ntok, os.path.join(a.out_dir, "pt-lr-dclm-grid"))
     plot_best(all_summary, os.path.join(a.out_dir, "pt-lr-dclm-best-all-sizes"))
     plot_best_combined(all_summary,
                        os.path.join(a.out_dir, "pt-lr-dclm-best-combined"),
