@@ -484,6 +484,12 @@ def plot_curves_vs_size(raw, out, degradation=False, min_sizes=2):
 
 SIZE_MARKER = {"30M": "o", "60M": "s", "100M": "^", "300M": "D", "600M": "P"}
 OPT_COLOR = {"adamw": "#2a78d6", "muon": "#eb6834"}
+# (size, chinchilla, optimizer) bases left out of the degradation-vs-loss
+# scatters. Each is a single cell sitting an order of magnitude off every
+# neighbour; the evals stay on GCS and the heatmaps still show them.
+VS_LOSS_EXCLUDE = {
+    ("60M", 2.0, "adamw"),   # 7e-2 at gamma 0.01 vs 1-3e-3 for every other 60M adamw cell
+}
 
 
 def plot_degradation_vs_loss(raw, out, gamma=0.01, relative=False, facet=None):
@@ -500,7 +506,7 @@ def plot_degradation_vs_loss(raw, out, gamma=0.01, relative=False, facet=None):
         if g is None or abs(g - gamma) > 1e-12:
             continue
         base = raw.get((None, size, chin, opt))
-        if base is None:
+        if base is None or (size, chin, opt) in VS_LOSS_EXCLUDE:
             continue
         d = v - base
         if relative:
@@ -578,11 +584,16 @@ def plot_degradation_vs_loss(raw, out, gamma=0.01, relative=False, facet=None):
     for j in range(len(groups), nrow * ncol):
         axes[j // ncol][j % ncol].axis("off")
 
-    handles = [plt.Line2D([], [], color=OPT_COLOR[o], marker="o", linestyle="none",
-                          markersize=7, label=o) for o in ("adamw", "muon")]
-    handles += [plt.Line2D([], [], color=MUTED, marker=SIZE_MARKER[z],
-                           linestyle="none", markersize=6.5, label=z)
-                for z in SIZES if any(q[0] == z for q in pts)]
+    # Optimizer = colour, size = marker shape. The optimizer entries use a
+    # colour swatch rather than a circle, since a circle is also the 30M
+    # marker; the size entries list only sizes actually drawn, and are
+    # omitted when every panel is a single size (the title already says it).
+    from matplotlib.patches import Patch
+    handles = [Patch(color=OPT_COLOR[o], label=o) for o in ("adamw", "muon")]
+    if facet != "size":
+        handles += [plt.Line2D([], [], color=MUTED, marker=SIZE_MARKER[z],
+                               linestyle="none", markersize=6.5, label=z)
+                    for z in SIZES if any(q[0] == z for q in pts)]
     if facet is None:
         axes[0][0].legend(handles=handles, frameon=False, fontsize=8.5, ncol=2,
                           loc="upper left")
