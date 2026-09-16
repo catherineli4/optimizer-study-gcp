@@ -195,6 +195,9 @@ def main():
     p.add_argument("--out-dir", default=os.path.join(repo, "colm-moss-latex"))
     p.add_argument("--axis", choices=AXES + ["all"], default="all")
     p.add_argument("--min-points", type=int, default=3)
+    p.add_argument("--chinchilla", type=float, default=None,
+                   help="restrict to one token budget, so a size whose sweep "
+                        "covers several does not bury the cell of interest")
     p.add_argument("--no-sync", action="store_true")
     p.add_argument("--eval-tokens", type=int, default=4193280,
                    help="expected DCLM_heldout size (DCLM_HELDOUT_INSTANCES x 4096)")
@@ -208,6 +211,9 @@ def main():
         sync(a.cache, a.size)
     runs = load(a.cache, a.size)
     print(f"{len(runs)} PTSweep{a.size} runs with a {LABEL} loss")
+    if a.chinchilla is not None:
+        runs = [r for r in runs if r["chinchilla"] == a.chinchilla]
+        print(f"  {len(runs)} at chinchilla {a.chinchilla:g}")
     # DCLM_heldout is meant to be DCLM_HELDOUT_INSTANCES(1024) x 4096 tokens.
     # A handful of runs were evaluated against a larger held-out set, and their
     # losses are NOT comparable with the rest -- six of them are weight-decay
@@ -227,7 +233,9 @@ def main():
     for axis in (AXES if a.axis == "all" else [a.axis]):
         plot_axis(runs, axis,
                   os.path.join(a.out_dir,
-                               f"pt{a.size.lower()}-dclm-vs-{axis}"),
+                               f"pt{a.size.lower()}-dclm-vs-{axis}"
+                               + (f"-c{a.chinchilla:g}"
+                                  if a.chinchilla is not None else "")),
                   a.size, min_points=a.min_points)
 
 
