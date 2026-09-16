@@ -302,7 +302,9 @@ def plot_wd_pinned_all_sizes(sizes, cache_root, out, chinchilla=1.0,
     handles.append(plt.Line2D([], [], color=INK, marker="o", markersize=9,
                               markerfacecolor="none", linestyle="none"))
     labels.append("tuned base (wd 0.1)")
-    ax.legend(handles, labels, frameon=False, fontsize=9, loc="center right")
+    # The band between the 30M and 60M curves is the only clear space.
+    ax.legend(handles, labels, frameon=False, fontsize=9, loc="center right",
+              bbox_to_anchor=(0.99, 0.74))
     ax.set_title(f"Held-out DCLM loss vs Muon weight decay at chinchilla "
                  f"{chinchilla:g}  —  AdamW group held at wd 0.1",
                  fontsize=11, color=INK, pad=10)
