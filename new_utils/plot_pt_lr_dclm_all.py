@@ -157,8 +157,6 @@ FOREIGN_LEGACY = set()
 # checkpoints and evals stay on GCS untouched, this only keeps them out of
 # the plots. Keyed (size, chinchilla, optimizer, swept LR).
 EXCLUDE = {
-    ("300M", 2.0, "muon", 1e-2),   # 3.25 vs 3.15 at 1.4e-2 and 3.20 at 2e-2
-    ("300M", 4.0, "muon", 1e-2),   # 3.18 vs 3.10 at 1.4e-2
     ("60M", 16.0, "muon", 4e-2),   # 4.05 vs 3.79 at 2.8e-2 and 3.82 at 5.6e-2
 }
 
