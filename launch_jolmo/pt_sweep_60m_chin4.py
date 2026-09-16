@@ -184,6 +184,23 @@ if _pts_size or _pts_chin:
           f"chinchilla-{CHINCHILLA}: tuned adamw={BEST_LR_ADAMW} "
           f"muon={BEST_LR_MUON}", flush=True)
 
+# Stage-1 grids overridable. OPTIM_PTSWEEP_MUON_LRS lists muon_lr values; each
+# is paired with the adamw COMPONENT of the table's tuned muon pair for this
+# cell (BEST_LR_MUON[1]), so the sweep is a clean muon_lr axis at the component
+# every other tuned-base analysis uses. OPTIM_PTSWEEP_ADAMW_LRS is the plain
+# adamw list. Either unset leaves the module's grid untouched.
+_pts_mlrs = os.environ.get("OPTIM_PTSWEEP_MUON_LRS", "").strip()
+if _pts_mlrs:
+    if BEST_LR_MUON is None:
+        raise ValueError("OPTIM_PTSWEEP_MUON_LRS needs a tuned muon pair for "
+                         f"{NAME_PREFIX} chinchilla-{CHINCHILLA} to take the "
+                         "adamw component from; PT_LR has none")
+    _comp = BEST_LR_MUON[1]
+    SWEEP_LR_MUON = [(float(x), _comp) for x in _pts_mlrs.replace(",", " ").split()]
+_pts_alrs = os.environ.get("OPTIM_PTSWEEP_ADAMW_LRS", "").strip()
+if _pts_alrs:
+    SWEEP_LR_ADAMW = [float(x) for x in _pts_alrs.replace(",", " ").split()]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
