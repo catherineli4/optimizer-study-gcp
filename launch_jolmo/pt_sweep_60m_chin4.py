@@ -165,11 +165,6 @@ _pts_wd = os.environ.get("OPTIM_PTSWEEP_WD", "").strip()
 if _pts_wd:
     SWEEP_WD = [float(x) for x in _pts_wd.replace(",", " ").split()]
 
-# OPTIM_PTSWEEP_NO_NORM_WD=1 exempts the RMSNorm gains from weight decay and
-# appends -nonormwd to the run name, so these are distinct artifacts from the
-# runs that decayed the gains (see JolmoModel.decay_norms).
-DECAY_NORMS = os.environ.get("OPTIM_PTSWEEP_NO_NORM_WD", "").strip() in ("", "0")
-
 _pts_opt = os.environ.get("OPTIM_PTSWEEP_OPTIMIZERS", "").strip()
 if _pts_opt:
     SWEEP_OPTIMIZERS = [o.strip() for o in _pts_opt.replace(",", " ").split()]
@@ -218,7 +213,8 @@ def _schedule_for(global_batch_size: int) -> Dict[str, Any]:
     }
 
 
-def _shared_params(global_batch_size: int, weight_decay: float) -> Dict[str, Any]:
+def _shared_params(global_batch_size: int, weight_decay: float,
+                   muon_weight_decay: Optional[float] = None) -> Dict[str, Any]:
     return {
         "model_type": MODEL_TYPE,
         "tokenizer": TOKENIZER,
@@ -232,8 +228,8 @@ def _shared_params(global_batch_size: int, weight_decay: float) -> Dict[str, Any
         # "wd sweep" varied decay on a small minority of parameters and the
         # wd=0 cell was not wd=0 at all.
         "weight_decay": weight_decay,
-        "muon_weight_decay": weight_decay,
-        "decay_norms": DECAY_NORMS,
+        "muon_weight_decay": (weight_decay if muon_weight_decay is None
+                              else muon_weight_decay),
         "betas": (0.9, 0.98),
         "max_grad_norm": 1.0,
         # Schedule
@@ -276,14 +272,30 @@ def _model(opt: str, lr, weight_decay: float, global_batch_size: int) -> JolmoMo
         lr_tag = f"muonlr{_lr_tag(muon_lr)}-adamwlr{_lr_tag(adamw_lr)}"
         extra = {"optimizer": "muon", "muon_lr": muon_lr, "learning_rate": adamw_lr}
 
+    if opt == "muon":
+        # A muon cell sweeps the MUON group's decay only. The AdamW group (norm
+        # gains, lm_head) stays at the recipe default so it is decayed
+        # identically in every cell: _build_optimizer_spec routes weight_decay
+        # to adamw_weight_decay, and for a muon run that group's lr is the tuned
+        # adamw component, 4-5x the Muon lr at these sizes -- letting it follow
+        # the cell made the axis mostly "norm-gain decay" (matrices moved 3.5%
+        # at wd 0->0.1, lm_head halved), which is what put wd=0 in front.
+        # The name keeps wd<default> for the pinned group and adds -muonwd<x>;
+        # at x == default the suffix is dropped, so that cell IS the tuned base.
+        adamw_wd, muon_wd = DEFAULT_WEIGHT_DECAY, weight_decay
+        wd_part = _wd_tag(adamw_wd) + (
+            "" if muon_wd == DEFAULT_WEIGHT_DECAY else f"-muon{_wd_tag(muon_wd)}")
+    else:
+        adamw_wd, muon_wd = weight_decay, weight_decay
+        wd_part = _wd_tag(weight_decay)
+
     name = (
         f"{NAME_PREFIX}-{MODEL_TYPE}-chinchilla-{CHINCHILLA}-{opt}-{lr_tag}"
-        f"-{_wd_tag(weight_decay)}-{_bs_tag(global_batch_size)}-{SCHEDULER}"
-        + ("" if DECAY_NORMS else "-nonormwd")
+        f"-{wd_part}-{_bs_tag(global_batch_size)}-{SCHEDULER}"
     )
     return JolmoModel(
         model_name=name,
-        **_shared_params(global_batch_size, weight_decay),
+        **_shared_params(global_batch_size, adamw_wd, muon_wd),
         **_schedule_for(global_batch_size),
         **extra,
     )

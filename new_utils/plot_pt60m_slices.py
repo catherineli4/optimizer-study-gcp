@@ -45,9 +45,12 @@ def patterns(size):
         "adamw": re.compile(
             rf"^PTSweep{size}-{mt}-chinchilla-([0-9.]+)-adamw-lr([0-9.e+\-]+)"
             rf"-wd([0-9.]+)-bs(\d+M)-wsd-eval\.json$"),
+        # Optional -muonwd<x>: the Muon group's decay when only it was swept
+        # and the adamw group stayed at the preceding wd<...> value.
         "muon": re.compile(
             rf"^PTSweep{size}-{mt}-chinchilla-([0-9.]+)-muon-muonlr([0-9.e+\-]+)"
-            rf"-adamwlr([0-9.e+\-]+)-wd([0-9.]+)-bs(\d+M)-wsd-eval\.json$"),
+            rf"-adamwlr([0-9.e+\-]+)-wd([0-9.]+)(?:-muonwd([0-9.]+))?"
+            rf"-bs(\d+M)-wsd-eval\.json$"),
     }
 
 AXES = ["chinchilla", "lr", "weight_decay", "batch_size"]
@@ -86,12 +89,19 @@ def load(cache, size):
             g = m.groups()
             if opt == "adamw":
                 chin, lr, wd, bs = float(g[0]), float(g[1]), float(g[2]), g[3]
-                comp = None
+                comp, adamw_wd, tagged = None, wd, False
             else:
-                chin, lr, comp, wd, bs = (float(g[0]), float(g[1]),
-                                          float(g[2]), float(g[3]), g[4])
+                chin, lr, comp, adamw_wd = (float(g[0]), float(g[1]),
+                                            float(g[2]), float(g[3]))
+                tagged = g[4] is not None
+                # weight_decay is the axis value = the Muon group's decay. An
+                # untagged run had both groups at that value; a tagged run kept
+                # the adamw group at adamw_wd.
+                wd = float(g[4]) if tagged else adamw_wd
+                bs = g[5]
             runs.append(dict(optimizer=opt, chinchilla=chin, lr=lr,
                              adamw_component=comp, weight_decay=wd,
+                             adamw_wd=adamw_wd, muon_only=tagged,
                              batch_size=bs, loss=cell["loss"],
                              num_tokens=cell["num_tokens"], name=fn))
             break
@@ -107,6 +117,26 @@ def slices(runs, axis, min_points):
     for r in runs:
         groups[tuple(r[k] for k in others)].append(r)
 
+    if axis == "weight_decay":
+        # Second family for the muon-only sweeps: runs where the adamw group
+        # was PINNED. Keyed additionally by adamw_wd, and the untagged run at
+        # that same value belongs too -- both groups at 0.1 is exactly "adamw
+        # pinned at 0.1, muon at 0.1", i.e. the tuned base is the anchor. The
+        # tied family above is left as is, so the older both-groups sweeps are
+        # unchanged; here we drop tagged runs from it, since a tagged wd=0.2
+        # point and a tied wd=0.2 point are different configurations.
+        for key in list(groups):
+            groups[key] = [r for r in groups[key] if not r["muon_only"]]
+        pinned = collections.defaultdict(list)
+        for r in runs:
+            if r["optimizer"] != "muon":
+                continue
+            if r["muon_only"] or r["weight_decay"] == r["adamw_wd"]:
+                pinned[tuple(r[k] for k in others) + ("adamw_wd", r["adamw_wd"])].append(r)
+        for key, rs in pinned.items():
+            if any(r["muon_only"] for r in rs):
+                groups[key] = rs
+
     out = []
     for key, rs in groups.items():
         xs = {r[axis] for r in rs}
@@ -118,7 +148,10 @@ def slices(runs, axis, min_points):
         for r in rs:
             by_x[r[axis]].append(r["loss"])
         pts = sorted((x, sum(v) / len(v)) for x, v in by_x.items())
-        out.append((dict(zip(others, key)), pts))
+        spec = dict(zip(others, key[:len(others)]))
+        if len(key) > len(others):          # pinned-adamw family
+            spec["pinned_adamw_wd"] = key[-1]
+        out.append((spec, pts))
     return out
 
 
@@ -136,6 +169,8 @@ def _label(spec, axis):
         bits.append(f"bs={spec['batch_size']}")
     if spec.get("adamw_component") is not None and axis != "lr":
         bits.append(f"acomp={spec['adamw_component']:.0e}")
+    if "pinned_adamw_wd" in spec:
+        bits.append(f"adamw-wd pinned {spec['pinned_adamw_wd']:g}")
     return "  ".join(bits)
 
 
