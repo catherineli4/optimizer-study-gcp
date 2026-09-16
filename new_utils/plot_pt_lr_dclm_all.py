@@ -231,6 +231,7 @@ def plot_size(size, data, ntok, out, split_schema=False, others=None):
     chins = sorted(data)
     if not chins:
         return None
+    table = tuned_lrs(size)
     ncol = min(5, len(chins))
     nrow = -(-len(chins) // ncol)
     fig, axes = plt.subplots(nrow, ncol, figsize=(4.1 * ncol, 3.5 * nrow),
@@ -264,9 +265,19 @@ def plot_size(size, data, ntok, out, split_schema=False, others=None):
                                 zorder=2)
             def _mean(x):
                 return sum(v for _, v in series[x]) / len(series[x])
-            blr = min(lrs, key=_mean)
+            # summary keeps the argmin for the "best-all-sizes" figure; the
+            # RING marks the table's declared LR, so the plot shows the config
+            # every tuned-base analysis actually uses, not the sweep's argmin.
+            summary.setdefault(opt, {})[chin] = (min(lrs, key=_mean),
+                                                 _mean(min(lrs, key=_mean)))
+            blr = table.get(opt, {}).get(chin)
+            if blr is None or not any(abs(x - blr) < 1e-12 for x in lrs):
+                if blr is not None:
+                    print(f"  {size} c{chin:g} {opt}: table LR {blr:g} has no run "
+                          f"at the tuned component -- no ring")
+                continue
+            blr = next(x for x in lrs if abs(x - blr) < 1e-12)
             bval = _mean(blr)
-            summary.setdefault(opt, {})[chin] = (blr, bval)
             ax.scatter([blr], [bval], s=140, facecolors="none",
                        edgecolors=COLOR[opt], linewidths=2.0, zorder=4)
             # adamw label above its marker, muon below: the two optima often sit
@@ -301,7 +312,7 @@ def plot_size(size, data, ntok, out, split_schema=False, others=None):
                     for s, st in SCHEMA_STYLE.items()]
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=9,
                               markerfacecolor="none", linestyle="none",
-                              label="best LR"))
+                              label="table LR (PT_LR_BY_MODEL)"))
     if others and any(others.values()):
         handles.append(plt.Line2D([], [], color=COLOR["muon"],
                                   label="muon, other adamw component",
@@ -521,7 +532,11 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                         vals = [v for _, v in series[x]]
                         ax.plot([x, x], [min(vals), max(vals)], color=COLOR[opt],
                                 linewidth=0.9, alpha=0.55, zorder=2)
-                k = min(range(len(lrs)), key=lambda i: mean[i])
+                tl = tuned_lrs(size).get(opt, {}).get(chin)
+                ks = [i for i, x in enumerate(lrs) if tl is not None and abs(x - tl) < 1e-12]
+                if not ks:
+                    continue
+                k = ks[0]
                 ax.scatter([lrs[k]], [mean[k]], s=95, facecolors="none",
                            edgecolors=COLOR[opt], linewidths=1.7, zorder=4)
                 dy, va = ((10, "bottom") if opt == "adamw" else (-12, "top"))
@@ -556,7 +571,7 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                           linewidth=1.4, label=o) for o in ("adamw", "muon")]
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=8,
                               markerfacecolor="none", linestyle="none",
-                              label="best LR (annotated)"))
+                              label="table LR (annotated)"))
     if all_others and any(v for d in all_others.values() for v in d.values()):
         handles.append(plt.Line2D([], [], color=COLOR["muon"],
                                   label="muon, other adamw component (dashed)",
