@@ -569,7 +569,12 @@ def plot_degradation_vs_loss(raw, out, gamma=0.01, relative=False, facet=None):
         if i // ncol == nrow - 1 or facet is None:
             ax.set_xlabel("unperturbed held-out DCLM loss", fontsize=9, color=MUTED)
         if i % ncol == 0:
-            ax.set_ylabel(ylab, fontsize=8.5 if facet else 10, color=INK)
+            # Faceted panels are short; the full label repeated per row
+            # collides with itself, so use the short form (gamma is in the
+            # suptitle).
+            ax.set_ylabel(("relative degradation" if relative
+                           else "degradation (nats)") if facet else ylab,
+                          fontsize=9 if facet else 10, color=INK)
     for j in range(len(groups), nrow * ncol):
         axes[j // ncol][j % ncol].axis("off")
 
