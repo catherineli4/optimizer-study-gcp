@@ -486,7 +486,7 @@ SIZE_MARKER = {"30M": "o", "60M": "s", "100M": "^", "300M": "D", "600M": "P"}
 OPT_COLOR = {"adamw": "#2a78d6", "muon": "#eb6834"}
 
 
-def plot_degradation_vs_loss(raw, out, gamma=0.01, relative=False):
+def plot_degradation_vs_loss(raw, out, gamma=0.01, relative=False, facet=None):
     """Every tuned base as one point: x = its unperturbed held-out loss,
     y = its degradation at one gamma (log scale). Colour = optimizer, marker =
     size, so the question "is the muon/adamw robustness gap explained by
@@ -513,37 +513,84 @@ def plot_degradation_vs_loss(raw, out, gamma=0.01, relative=False):
     if not pts:
         print(f"no points at gamma {gamma:g}")
         return
-    fig, ax = plt.subplots(figsize=(7.2, 5.0))
-    for size in SIZES:
-        for opt in ("adamw", "muon"):
-            sel = [q for q in pts if q[0] == size and q[2] == opt]
-            if not sel:
-                continue
-            ax.scatter([q[3] for q in sel], [q[4] for q in sel], s=48,
-                       marker=SIZE_MARKER[size], color=OPT_COLOR[opt],
-                       edgecolors="white", linewidths=0.6, alpha=0.9, zorder=3)
-    for size, chin, opt, base, d in pts:
-        ax.annotate(f"{chin:g}", (base, d), textcoords="offset points",
-                    xytext=(4, 3), fontsize=6, color=OPT_COLOR[opt], alpha=0.8)
-    ax.set_yscale("log")
-    ax.set_xlabel("unperturbed held-out DCLM loss", fontsize=10, color=MUTED)
-    ax.set_ylabel(("relative degradation  (perturbed − base) / base"
-                   if relative else "degradation  perturbed − base  (nats)")
-                  + f"   at $\\gamma$ = {gamma:g}", fontsize=10, color=INK)
-    ax.grid(True, which="both", alpha=0.22, linewidth=0.5)
-    ax.tick_params(labelsize=8.5, colors=MUTED)
+    ylab = (("relative degradation  (perturbed − base) / base" if relative
+             else "degradation  perturbed − base  (nats)")
+            + f"   at $\\gamma$ = {gamma:g}")
+    what = f"{'Relative d' if relative else 'D'}egradation under Gaussian weight " \
+           f"perturbation ($\\gamma$ = {gamma:g}) vs model quality"
+
+    # facet=None: one axis. facet="size" / "chinchilla": one panel per value,
+    # shared log-y so panels compare directly; x free, since the loss range
+    # moves with size. The in-panel label is whichever of the two the panel
+    # does NOT already fix.
+    if facet is None:
+        groups = [(None, pts)]
+        label_key = 1                       # chinchilla
+    elif facet == "size":
+        groups = [(z, [q for q in pts if q[0] == z]) for z in SIZES
+                  if any(q[0] == z for q in pts)]
+        label_key = 1
+    elif facet == "chinchilla":
+        chins = sorted({q[1] for q in pts})
+        groups = [(c, [q for q in pts if q[1] == c]) for c in chins]
+        label_key = 0                       # size
+    else:
+        raise ValueError(facet)
+
+    ncol = min(5, len(groups))
+    nrow = -(-len(groups) // ncol)
+    if facet is None:
+        fig, axes = plt.subplots(1, 1, figsize=(7.2, 5.0), squeeze=False)
+    else:
+        fig, axes = plt.subplots(nrow, ncol, figsize=(3.4 * ncol, 3.2 * nrow),
+                                 squeeze=False, sharey=True)
+    for i, (key, sel_all) in enumerate(groups):
+        ax = axes[i // ncol][i % ncol]
+        for size in SIZES:
+            for opt in ("adamw", "muon"):
+                sel = [q for q in sel_all if q[0] == size and q[2] == opt]
+                if not sel:
+                    continue
+                ax.scatter([q[3] for q in sel], [q[4] for q in sel], s=48,
+                           marker=SIZE_MARKER[size], color=OPT_COLOR[opt],
+                           edgecolors="white", linewidths=0.6, alpha=0.9, zorder=3)
+        for q in sel_all:
+            lab = q[label_key]
+            ax.annotate(f"{lab:g}" if isinstance(lab, float) else lab, (q[3], q[4]),
+                        textcoords="offset points", xytext=(4, 3), fontsize=6,
+                        color=OPT_COLOR[q[2]], alpha=0.8)
+        ax.set_yscale("log")
+        ax.grid(True, which="both", alpha=0.22, linewidth=0.5)
+        ax.tick_params(labelsize=8, colors=MUTED)
+        if facet == "size":
+            ax.set_title(f"{key} ({MODEL_TYPE[key]})", fontsize=10, color=INK)
+        elif facet == "chinchilla":
+            ax.set_title(f"chinchilla {key:g}", fontsize=10, color=INK)
+        if i // ncol == nrow - 1 or facet is None:
+            ax.set_xlabel("unperturbed held-out DCLM loss", fontsize=9, color=MUTED)
+        if i % ncol == 0:
+            ax.set_ylabel(ylab, fontsize=8.5 if facet else 10, color=INK)
+    for j in range(len(groups), nrow * ncol):
+        axes[j // ncol][j % ncol].axis("off")
+
     handles = [plt.Line2D([], [], color=OPT_COLOR[o], marker="o", linestyle="none",
                           markersize=7, label=o) for o in ("adamw", "muon")]
     handles += [plt.Line2D([], [], color=MUTED, marker=SIZE_MARKER[z],
                            linestyle="none", markersize=6.5, label=z)
                 for z in SIZES if any(q[0] == z for q in pts)]
-    ax.legend(handles=handles, frameon=False, fontsize=8.5, ncol=2,
-              loc="upper left")
-    ax.set_title(f"{'Relative d' if relative else 'D'}egradation under Gaussian "
-                 f"weight perturbation ($\\gamma$ = {gamma:g}) vs model quality"
-                 f"\nevery tuned base; small label = chinchilla",
-                 fontsize=11.5, color=INK)
-    fig.tight_layout()
+    if facet is None:
+        axes[0][0].legend(handles=handles, frameon=False, fontsize=8.5, ncol=2,
+                          loc="upper left")
+        axes[0][0].set_title(f"{what}\nevery tuned base; small label = chinchilla",
+                             fontsize=11.5, color=INK)
+        fig.tight_layout()
+    else:
+        fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+                   frameon=False, fontsize=9, bbox_to_anchor=(0.5, -0.02))
+        lab = "chinchilla" if facet == "size" else "size"
+        fig.suptitle(f"{what}  —  one panel per {facet}; small label = {lab}",
+                     fontsize=12, color=INK)
+        fig.tight_layout(rect=(0, 0.03, 1, 0.95))
     for ext in ("png", "pdf"):
         fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -613,10 +660,12 @@ def main():
     plot_curves(raw, os.path.join(a.out_dir, "perturb-degradation-vs-chinchilla"),
                 degradation=True)
 
-    plot_degradation_vs_loss(raw, os.path.join(a.out_dir, "perturb-degradation-vs-loss-g0.01"),
-                             gamma=0.01)
-    plot_degradation_vs_loss(raw, os.path.join(a.out_dir, "perturb-reldegradation-vs-loss-g0.01"),
-                             gamma=0.01, relative=True)
+    for rel, stem in ((False, "perturb-degradation-vs-loss-g0.01"),
+                      (True, "perturb-reldegradation-vs-loss-g0.01")):
+        for facet, suffix in ((None, ""), ("size", "-by-size"),
+                              ("chinchilla", "-by-chinchilla")):
+            plot_degradation_vs_loss(raw, os.path.join(a.out_dir, stem + suffix),
+                                     gamma=0.01, relative=rel, facet=facet)
 
     plot_curves_vs_size(raw, os.path.join(a.out_dir, "perturb-loss-vs-size"))
     plot_curves_vs_size(raw, os.path.join(a.out_dir, "perturb-degradation-vs-size"),
