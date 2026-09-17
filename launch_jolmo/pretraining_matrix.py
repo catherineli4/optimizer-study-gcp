@@ -204,14 +204,16 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
                 # swept range (1e-2), so the true optimum likely sits below it;
                 # and the top-two gaps are <= 0.008 CE, so the picks are soft.
                 # Extend the grid downward before treating these as final.
-                # 2026-09-17: adamw components follow the adamw row above; the
-                # muon LRs in the changed cells (c0.25/c0.5/c1/c2/c8) are carried
-                # over from the OLD component and are pending a retune.
-                0.25: (1.4e-2, 8.0e-2),
-                0.5: (1.4e-2, 4.0e-2),
+                # 2026-09-17: adamw components follow the adamw row above. Muon LRs
+                # re-tuned at the new components (pt-lr-dclm-grid.png minima):
+                #   c0.25 1.4e-2->1e-2 (5.330 vs 5.380), c0.5 1.4e-2->1e-2 (4.934 vs
+                #   4.982), c2 2e-2->1.4e-2 (4.446 vs 4.449), c4 1.4e-2->2e-2 (4.379
+                #   vs 4.381); c1/c8/c16/c32/c64 unchanged. c2/c4 gaps are within noise.
+                0.25: (1.0e-2, 8.0e-2),
+                0.5: (1.0e-2, 4.0e-2),
                 1: (1.0e-2, 4.0e-2),
-                2: (2e-2, 1.4e-2),
-                4: (1.4e-2, 2.0e-2),
+                2: (1.4e-2, 1.4e-2),
+                4: (2.0e-2, 2.0e-2),
                 8: (1.0e-2, 1.4e-2),
                 16: (1.4e-2, 2.0e-2),
                 32: (1.0e-2, 1.4e-2),
