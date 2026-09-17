@@ -877,6 +877,16 @@ def main():
          sizes=["300M", "600M"])
     plot(deg, chins,
          os.path.join(a.out_dir,
+                      "perturb-degradation-diff-muon-minus-adamw-small-100M-300M-600M"),
+         title="Degradation under Gaussian weight perturbation: muon vs adamw "
+               "($\\gamma \\leq 0.02$), 100M, 300M and 600M",
+         cbar_label="muon - adamw  loss degradation",
+         caption="cell = (perturbed - unperturbed) for muon minus the same for "
+                 "adamw    |    negative (blue) = muon degrades less",
+         gammas=[g for g in GAMMAS if g <= 0.02], clip_pct=100,
+         sizes=["100M", "300M", "600M"])
+    plot(deg, chins,
+         os.path.join(a.out_dir,
                       "perturb-degradation-diff-muon-minus-adamw-small"),
          title="Degradation under Gaussian weight perturbation: muon vs adamw "
                "($\\gamma \\leq 0.02$)",
