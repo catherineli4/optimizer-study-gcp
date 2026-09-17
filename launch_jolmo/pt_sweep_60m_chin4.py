@@ -143,7 +143,10 @@ DEFAULT_WEIGHT_DECAY = 0.1              # matches SHARED_MODEL_PARAMS in the mai
 # dict holds the 0.06B entry only, so a retargeted size raised KeyError. 0.06B
 # still resolves to the same 20 x 60,030,976 through the override inside it.
 BASE_TOKENS = _base_tokens_for(MODEL_TYPE)
-N_TOKENS = BASE_TOKENS * CHINCHILLA
+# int(): a fractional chinchilla (0.25, 0.5) otherwise makes n_tokens and the
+# derived warmup_steps floats, which leak into the generated YAML. Same guard
+# pretraining_matrix._tokens_for applies; the values are unchanged.
+N_TOKENS = int(BASE_TOKENS * CHINCHILLA)
 
 _SIZE, _PROFILE = active_profile()
 
