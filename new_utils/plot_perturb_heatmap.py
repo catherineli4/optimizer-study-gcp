@@ -248,7 +248,10 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
     fig.subplots_adjust(bottom=1.15 / fh, top=1 - 0.8 / fh, left=0.75 / fw,
                         right=1 - 0.2 / fw, wspace=0.32)
     # Three decimals read as +0.000 everywhere when the whole range is ~1e-3.
-    cell_fmt = "+.4f" if lim < 0.01 else "+.3f"
+    # One more digit than the colour range strictly needs: five decimals when
+    # the whole range is a few 1e-3 (the 300M/600M subset), four otherwise.
+    cell_fmt = "+.5f" if lim < 0.005 else "+.4f"
+    cell_fs = 6.3 if lim < 0.005 else 6.6
     for i, g in enumerate(gs):
         ax = axes[0][i]
         M = np.full((len(chins), len(SIZES)), np.nan)
@@ -269,7 +272,7 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
             for c in range(len(SIZES)):
                 if not np.isnan(M[r][c]):
                     ax.text(c, r, format(M[r][c], cell_fmt), ha="center",
-                            va="center", fontsize=7, color=INK)
+                            va="center", fontsize=cell_fs, color=INK)
         ax.set_xticks(np.arange(-.5, len(SIZES), 1), minor=True)
         ax.set_yticks(np.arange(-.5, len(chins), 1), minor=True)
         ax.grid(which="minor", color=GRID, linewidth=1)
@@ -770,7 +773,7 @@ def plot_mixed_gamma(raw, chins, out, gamma_by_size=None, relative=False, clip_p
     for r in range(len(chins)):
         for c in range(len(SIZES)):
             if not np.isnan(M[r][c]):
-                ax.text(c, r, f"{M[r][c]:+.3f}", ha="center", va="center",
+                ax.text(c, r, f"{M[r][c]:+.4f}", ha="center", va="center",
                         fontsize=7.5, color=INK)
     ax.set_xticks(np.arange(-.5, len(SIZES), 1), minor=True)
     ax.set_yticks(np.arange(-.5, len(chins), 1), minor=True)
