@@ -716,6 +716,8 @@ def plot_degradation_vs_loss_combined(raw, out, gamma=0.01, facet="size"):
 # relative noise scale before the loss moves, so a single gamma leaves either
 # the small sizes saturated or the large ones near zero.
 MIXED_GAMMA = {"30M": 0.01, "60M": 0.02, "100M": 0.02, "300M": 0.03, "600M": 0.03}
+# A stronger ladder on the same size grouping.
+MIXED_GAMMA_HI = {"30M": 0.03, "60M": 0.05, "100M": 0.05, "300M": 0.07, "600M": 0.07}
 
 
 def plot_mixed_gamma(raw, chins, out, gamma_by_size=None, relative=False, clip_pct=97):
@@ -815,6 +817,12 @@ def main():
     plot_mixed_gamma(raw, chins, os.path.join(
         a.out_dir, "perturb-reldegradation-diff-muon-minus-adamw-mixed-gamma"),
         relative=True)
+    plot_mixed_gamma(raw, chins, os.path.join(
+        a.out_dir, "perturb-degradation-diff-muon-minus-adamw-mixed-gamma-0.03-0.05-0.07"),
+        gamma_by_size=MIXED_GAMMA_HI)
+    plot_mixed_gamma(raw, chins, os.path.join(
+        a.out_dir, "perturb-reldegradation-diff-muon-minus-adamw-mixed-gamma-0.03-0.05-0.07"),
+        gamma_by_size=MIXED_GAMMA_HI, relative=True)
 
     rel = degradation_diffs(raw, relative=True)
     REL_CAPTION = ("cell = 100 x (perturbed - unperturbed) / unperturbed for muon "
