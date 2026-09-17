@@ -1,5 +1,5 @@
 chinchilla,optimizer,batch,best_lr,dclm_loss,n_lrs
-0.25,adamw,1M,0.0025,3.2965,4
+0.25,adamw,1M,0.0025,3.2965,5
 0.25,muon,1M,0.014,3.2235,6
 0.5,adamw,1M,0.0025,3.1407,9
 0.5,muon,1M,0.014,3.1091,7
