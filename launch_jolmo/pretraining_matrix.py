@@ -178,12 +178,15 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
         # 4e-2) are consistent with that.
         "wsd": {
             "adamw": {
-                0.25: 1.6e-1,
-                0.5: 1.2e-1,
-                1: 5.6e-2,
-                2: 5.6e-2,
+                # 2026-09-17: adamw cells c0.25/c0.5/c1/c2/c8 moved to the lowest-loss
+                # LR on the re-budgeted DCLM grid (pt-lr-dclm-grid.png squares):
+                # 1.6e-1->8e-2, 1.2e-1->4e-2, 5.6e-2->4e-2, 5.6e-2->1.4e-2, 2e-2->1.4e-2.
+                0.25: 8.0e-2,
+                0.5: 4.0e-2,
+                1: 4.0e-2,
+                2: 1.4e-2,
                 4: 2.0e-2,
-                8: 2.0e-2,
+                8: 1.4e-2,
                 16: 2.0e-2,
                 32: 1.4e-2,
                 64: 1.0e-2,
@@ -201,12 +204,15 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
                 # swept range (1e-2), so the true optimum likely sits below it;
                 # and the top-two gaps are <= 0.008 CE, so the picks are soft.
                 # Extend the grid downward before treating these as final.
-                0.25: (1.4e-2, 1.6e-1),
-                0.5: (1.4e-2, 1.2e-1),
-                1: (1.0e-2, 5.6e-2),
-                2: (2e-2, 5.6e-2),
+                # 2026-09-17: adamw components follow the adamw row above; the
+                # muon LRs in the changed cells (c0.25/c0.5/c1/c2/c8) are carried
+                # over from the OLD component and are pending a retune.
+                0.25: (1.4e-2, 8.0e-2),
+                0.5: (1.4e-2, 4.0e-2),
+                1: (1.0e-2, 4.0e-2),
+                2: (2e-2, 1.4e-2),
                 4: (1.4e-2, 2.0e-2),
-                8: (1.0e-2, 2.0e-2),
+                8: (1.0e-2, 1.4e-2),
                 16: (1.4e-2, 2.0e-2),
                 32: (1.0e-2, 1.4e-2),
                 64: (1.4e-2, 1.0e-2),
