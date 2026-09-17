@@ -164,6 +164,13 @@ EXCLUDE = {
     ("300M", 2.0, "muon", 2e-2),
     ("300M", 4.0, "muon", 2e-2),
 }
+# LR-range cuts: every run of (size, chinchilla, optimizer) with swept LR <= the
+# given value is dropped. The 100M c2/c4 adamw sweeps carry a tail of runs at
+# 3e-4 .. 5e-3 that sit ~0.7 nats above the rest of the curve.
+EXCLUDE_LE = {
+    ("100M", 2.0, "adamw"): 5e-3,
+    ("100M", 4.0, "adamw"): 5e-3,
+}
 # Whole (size, chinchilla) cells left out of every figure: no LR sweep exists
 # there, only the single tuned point per optimizer, so a panel has nothing to
 # show. Keyed (size, chinchilla).
@@ -203,7 +210,9 @@ def load(size, d, only_schema=None, tuned_component=None, return_others=False):
             cell = json.load(open(os.path.join(d, fn))).get(
                 "by_label", {}).get(LABEL)
             if cell and ((size, float(m.group(1))) in SKIP_CELLS or
-                         (size, float(m.group(1)), opt, float(m.group(2))) in EXCLUDE):
+                         (size, float(m.group(1)), opt, float(m.group(2))) in EXCLUDE or
+                         float(m.group(2)) <= EXCLUDE_LE.get(
+                             (size, float(m.group(1)), opt), -1.0)):
                 break
             if cell:
                 schema = "MuonExpt3" if fn.startswith("MuonExpt3") else "PTSweep"
