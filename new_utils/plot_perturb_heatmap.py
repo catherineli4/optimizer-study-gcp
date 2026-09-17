@@ -214,8 +214,39 @@ def degradation_diffs(raw, relative=False):
     return out
 
 
+def degradation_ratios(raw):
+    """{gamma: {(size, chinchilla): muon_degradation / adamw_degradation}}.
+
+    The multiplicative counterpart of degradation_diffs: 2.0 means muon loses
+    twice as many nats as adamw at that gamma. A ratio needs both degradations
+    strictly positive; a cell where either is <= 0 (an eval no worse than its
+    base -- in practice a broken artifact) is dropped and reported.
+    """
+    out, dropped = {}, []
+    for (g, size, chin, opt), v in raw.items():
+        if g is None or opt != "muon":
+            continue
+        m0 = raw.get((None, size, chin, "muon"))
+        a = raw.get((g, size, chin, "adamw"))
+        a0 = raw.get((None, size, chin, "adamw"))
+        if None in (m0, a, a0):
+            continue
+        dm, da = v - m0, a - a0
+        # 1e-5 nats, not 0: an unperturbed checkpoint re-evaluated differs from
+        # its base by ~1e-8 (eval nondeterminism), which is "positive" and
+        # would produce a ratio in the millions.
+        if dm <= 1e-5 or da <= 1e-5:
+            dropped.append((g, size, chin, dm, da))
+            continue
+        out.setdefault(g, {})[(size, chin)] = dm / da
+    for g, size, chin, dm, da in sorted(dropped):
+        print(f"  ratio undefined, dropped: gamma {g:g} {size} c{chin:g} "
+              f"(muon deg {dm:+.4f}, adamw deg {da:+.4f})")
+    return out
+
+
 def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
-         gammas=None, clip_pct=97, sizes=None):
+         gammas=None, clip_pct=97, sizes=None, ratio=False):
     # The colour scale is computed from the gammas actually shown, so a
     # restricted range rescales instead of being flattened by the large-gamma
     # values that dominate the full set.
@@ -229,6 +260,10 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
     diffs = {g: {k: v for k, v in diffs[g].items() if k[0] in SIZES} for g in gs}
     chins = [c for c in chins if any((z, c) in diffs[g] for g in gs for z in SIZES)]
     vals = [v for g in gs for v in diffs[g].values()]
+    if ratio:
+        # Colour on log2(ratio): 2x and 0.5x are equally far from "no
+        # difference" (1x), which a linear scale centred on 1 would not show.
+        vals = list(np.log2(vals))
     # Robust limits: a single outlier (e.g. the 60M/c2 cell at gamma 0.01) would
     # otherwise set vmax for every panel and flatten all the real structure to
     # near-white. Clipped cells still carry their true value as text.
@@ -257,7 +292,8 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
         M = np.full((len(chins), len(SIZES)), np.nan)
         for (size, chin), v in diffs[g].items():
             M[chins.index(chin)][SIZES.index(size)] = v
-        im = ax.imshow(M, cmap=CMAP, norm=norm, aspect="auto", origin="lower")
+        im = ax.imshow(np.log2(M) if ratio else M, cmap=CMAP, norm=norm,
+                       aspect="auto", origin="lower")
         ax.set_xticks(range(len(SIZES)))
         ax.set_xticklabels(SIZES, fontsize=8.5, rotation=45, ha="right")
         ax.set_yticks(range(len(chins)))
@@ -271,8 +307,9 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
         for r in range(len(chins)):
             for c in range(len(SIZES)):
                 if not np.isnan(M[r][c]):
-                    ax.text(c, r, format(M[r][c], cell_fmt), ha="center",
-                            va="center", fontsize=cell_fs, color=INK)
+                    ax.text(c, r, (f"{M[r][c]:.2f}x" if ratio
+                                   else format(M[r][c], cell_fmt)),
+                            ha="center", va="center", fontsize=cell_fs, color=INK)
         ax.set_xticks(np.arange(-.5, len(SIZES), 1), minor=True)
         ax.set_yticks(np.arange(-.5, len(chins), 1), minor=True)
         ax.grid(which="minor", color=GRID, linewidth=1)
@@ -280,6 +317,10 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
         ax.tick_params(colors=MUTED)
 
     cb = fig.colorbar(im, ax=axes[0].tolist(), fraction=0.03, pad=0.02)
+    if ratio:
+        ticks = [t for t in (-4, -3, -2, -1, 0, 1, 2, 3, 4) if abs(t) <= lim]
+        cb.set_ticks(ticks)
+        cb.set_ticklabels([f"{2.0 ** t:g}x" for t in ticks])
     cb.set_label(cbar_label or "muon - adamw  perturbed DCLM loss",
                  fontsize=9.5, color=INK)
     cb.ax.tick_params(labelsize=8, colors=MUTED)
@@ -290,8 +331,10 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
     # with the per-panel gamma titles.
     if n_clipped:
         fig.text(0.5, 0.05 / fh,
-                 f"colour scale clipped at ±{lim:.3f} ({clip_pct}th pct); "
-                 f"{n_clipped} cell(s) beyond it keep their printed value",
+                 (f"colour scale clipped at {2 ** -lim:.2f}x-{2 ** lim:.2f}x "
+                  f"({clip_pct}th pct); " if ratio else
+                  f"colour scale clipped at ±{lim:.3f} ({clip_pct}th pct); ")
+                 + f"{n_clipped} cell(s) beyond it keep their printed value",
                  ha="center", fontsize=8, color=MUTED)
     fig.text(0.5, 0.30 / fh, caption or
              "cell = perturbed held-out DCLM loss, tuned muon base minus tuned "
@@ -840,6 +883,20 @@ def main():
     plot_mixed_gamma(raw, chins, os.path.join(
         a.out_dir, "perturb-reldegradation-diff-muon-minus-adamw-mixed-gamma-0.03-0.05-0.07"),
         gamma_by_size=MIXED_GAMMA_HI, relative=True)
+
+    rat = degradation_ratios(raw)
+    RAT_CAPTION = ("cell = (perturbed - unperturbed) for muon DIVIDED BY the same "
+                   "for adamw    |    >1x (red) = muon degrades more    |    "
+                   "white = no data or undefined")
+    plot(rat, chins, os.path.join(a.out_dir, "perturb-degradation-ratio-muon-over-adamw"),
+         title="Degradation under Gaussian weight perturbation: muon / adamw",
+         cbar_label="muon / adamw  loss degradation  (log scale)",
+         caption=RAT_CAPTION, ratio=True)
+    plot(rat, chins, os.path.join(a.out_dir, "perturb-degradation-ratio-muon-over-adamw-small"),
+         title="Degradation under Gaussian weight perturbation: muon / adamw "
+               "($\\gamma \\leq 0.02$)",
+         cbar_label="muon / adamw  loss degradation  (log scale)",
+         caption=RAT_CAPTION, gammas=[g for g in GAMMAS if g <= 0.02], ratio=True)
 
     rel = degradation_diffs(raw, relative=True)
     REL_CAPTION = ("cell = 100 x (perturbed - unperturbed) / unperturbed for muon "
