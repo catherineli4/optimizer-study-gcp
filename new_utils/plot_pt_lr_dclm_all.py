@@ -179,6 +179,9 @@ STAR_SINCE = None
 STAR_UNTIL = None     # optional upper bound: a `gsutil mv` (e.g. restoring runs
                       # from a backup prefix) rewrites the object and gives an OLD
                       # eval a NEW write time, which must not be starred as new.
+STAR_WINDOWS = []     # [(since, until-or-None)] in epoch seconds; several
+                      # windows let separate training batches be starred while
+                      # a restore that happened between them is not.
 STARRED = {}
 
 
@@ -227,8 +230,8 @@ def load(size, d, only_schema=None, tuned_component=None, return_others=False):
                     .setdefault(float(m.group(2)), [])
                     .append((schema, cell["loss"])))
                 _mt = os.path.getmtime(os.path.join(d, fn))
-                if STAR_SINCE is not None and _mt >= STAR_SINCE and \
-                        (STAR_UNTIL is None or _mt < STAR_UNTIL):
+                if any(lo <= _mt and (hi is None or _mt < hi)
+                       for lo, hi in STAR_WINDOWS):
                     STARRED.setdefault(size, set()).add(
                         (float(m.group(1)), opt, float(m.group(2))))
                 ntok.add(cell["num_tokens"])
@@ -588,13 +591,12 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                               label="table LR (annotated)"))
     if any(STARRED.values()):
         import datetime
-        since = datetime.datetime.utcfromtimestamp(STAR_SINCE).strftime("%Y-%m-%d %H:%MZ")
-        until = ("" if STAR_UNTIL is None else
-                 datetime.datetime.utcfromtimestamp(STAR_UNTIL).strftime("–%H:%MZ"))
+        since = datetime.datetime.utcfromtimestamp(
+            min(lo for lo, _ in STAR_WINDOWS)).strftime("%Y-%m-%d")
         handles.append(plt.Line2D([], [], color=MUTED, marker="*", markersize=10,
                                   markeredgecolor=INK, markeredgewidth=0.5,
                                   linestyle="none",
-                                  label=f"newly trained (eval written {since}{until})"))
+                                  label=f"newly trained (since {since})"))
     fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False,
                fontsize=10, bbox_to_anchor=(0.5, -0.012))
     toks = {t for s in sizes for t in all_ntok.get(s, ())}
@@ -632,13 +634,19 @@ def main():
                         "UTC time, e.g. 2026-09-17T16:00")
     p.add_argument("--star-until", default=None, metavar="UTC",
                    help="upper bound for --star-since (exclusive)")
+    p.add_argument("--star-window", nargs=2, action="append", metavar=("FROM", "TO"),
+                   help="additional UTC window to star; repeatable")
     a = p.parse_args()
+    import calendar, datetime
+    global STAR_SINCE, STAR_UNTIL
+    _ts = lambda x: calendar.timegm(datetime.datetime.fromisoformat(x).timetuple())
     if a.star_since:
-        import calendar, datetime
-        global STAR_SINCE, STAR_UNTIL
-        _ts = lambda x: calendar.timegm(datetime.datetime.fromisoformat(x).timetuple())
         STAR_SINCE = _ts(a.star_since)
         STAR_UNTIL = _ts(a.star_until) if a.star_until else None
+        STAR_WINDOWS.append((STAR_SINCE, STAR_UNTIL))
+    for lo, hi in (a.star_window or []):
+        STAR_WINDOWS.append((_ts(lo), _ts(hi)))
+        STAR_SINCE = min(STAR_SINCE, _ts(lo)) if STAR_SINCE is not None else _ts(lo)
 
     os.makedirs(a.out_dir, exist_ok=True)
     all_summary, all_table, all_data, all_ntok, all_others = {}, {}, {}, {}, {}
