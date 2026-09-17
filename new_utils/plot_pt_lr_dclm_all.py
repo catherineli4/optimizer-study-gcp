@@ -172,6 +172,16 @@ SKIP_CELLS = {
 }
 
 
+# Points to star: {size: {(chinchilla, optimizer, lr)}} -- filled by load() for
+# evals written on/after STAR_SINCE (epoch seconds). gsutil rsync gives each
+# mirrored file its object's GCS write time, so the file mtime IS that time.
+STAR_SINCE = None
+STAR_UNTIL = None     # optional upper bound: a `gsutil mv` (e.g. restoring runs
+                      # from a backup prefix) rewrites the object and gives an OLD
+                      # eval a NEW write time, which must not be starred as new.
+STARRED = {}
+
+
 def load(size, d, only_schema=None, tuned_component=None, return_others=False):
     """{chinchilla: {optimizer: {lr: [losses]}}} — a list per LR because the
     two naming schemas are independent runs of the same recipe.
@@ -216,6 +226,11 @@ def load(size, d, only_schema=None, tuned_component=None, return_others=False):
                     .setdefault(opt, {})
                     .setdefault(float(m.group(2)), [])
                     .append((schema, cell["loss"])))
+                _mt = os.path.getmtime(os.path.join(d, fn))
+                if STAR_SINCE is not None and _mt >= STAR_SINCE and \
+                        (STAR_UNTIL is None or _mt < STAR_UNTIL):
+                    STARRED.setdefault(size, set()).add(
+                        (float(m.group(1)), opt, float(m.group(2))))
                 ntok.add(cell["num_tokens"])
             break
     if return_others:
@@ -527,6 +542,12 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                 mean = [sum(v for _, v in series[x]) / len(series[x]) for x in lrs]
                 ax.plot(lrs, mean, "o-", color=COLOR[opt], markersize=3.8,
                         linewidth=1.4, zorder=3)
+                new = [i for i, x in enumerate(lrs)
+                       if (chin, opt, x) in STARRED.get(size, ())]
+                if new:
+                    ax.scatter([lrs[i] for i in new], [mean[i] for i in new],
+                               marker="*", s=75, color=COLOR[opt],
+                               edgecolors=INK, linewidths=0.5, zorder=6)
                 tl = tuned_lrs(size).get(opt, {}).get(chin)
                 ks = [i for i, x in enumerate(lrs) if tl is not None and abs(x - tl) < 1e-12]
                 if not ks:
@@ -565,6 +586,15 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=8,
                               markerfacecolor="none", linestyle="none",
                               label="table LR (annotated)"))
+    if any(STARRED.values()):
+        import datetime
+        since = datetime.datetime.utcfromtimestamp(STAR_SINCE).strftime("%Y-%m-%d %H:%MZ")
+        until = ("" if STAR_UNTIL is None else
+                 datetime.datetime.utcfromtimestamp(STAR_UNTIL).strftime("–%H:%MZ"))
+        handles.append(plt.Line2D([], [], color=MUTED, marker="*", markersize=10,
+                                  markeredgecolor=INK, markeredgewidth=0.5,
+                                  linestyle="none",
+                                  label=f"newly trained (eval written {since}{until})"))
     fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False,
                fontsize=10, bbox_to_anchor=(0.5, -0.012))
     toks = {t for s in sizes for t in all_ntok.get(s, ())}
@@ -597,7 +627,18 @@ def main():
                    metavar="SIZE",
                    help="sizes whose figure plots each naming schema as its "
                         "own line instead of averaging them (default: 100M)")
+    p.add_argument("--star-since", default=None, metavar="UTC",
+                   help="star every point whose eval was written on/after this "
+                        "UTC time, e.g. 2026-09-17T16:00")
+    p.add_argument("--star-until", default=None, metavar="UTC",
+                   help="upper bound for --star-since (exclusive)")
     a = p.parse_args()
+    if a.star_since:
+        import calendar, datetime
+        global STAR_SINCE, STAR_UNTIL
+        _ts = lambda x: calendar.timegm(datetime.datetime.fromisoformat(x).timetuple())
+        STAR_SINCE = _ts(a.star_since)
+        STAR_UNTIL = _ts(a.star_until) if a.star_until else None
 
     os.makedirs(a.out_dir, exist_ok=True)
     all_summary, all_table, all_data, all_ntok, all_others = {}, {}, {}, {}, {}
