@@ -13,7 +13,7 @@ chinchilla,optimizer,batch,best_lr,dclm_loss,n_lrs
 2,muon,4M,0.01,4.8928,5
 4,adamw,1M,0.02,4.4235,9
 4,muon,1M,0.02,4.3788,7
-8,adamw,1M,0.028,4.3616,6
+8,adamw,1M,0.014,4.3599,7
 8,muon,1M,0.014,4.3314,7
 16,adamw,1M,0.02,4.3225,9
 16,muon,1M,0.014,4.3001,7
