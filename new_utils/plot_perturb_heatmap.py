@@ -239,10 +239,16 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
     n_clipped = int((mag > lim).sum())
     norm = TwoSlopeNorm(vmin=-lim, vcenter=0.0, vmax=lim)
 
-    fig, axes = plt.subplots(
-        1, len(gs),
-        figsize=((0.5 * len(SIZES) + 0.7) * len(gs) + 1.6, 0.42 * len(chins) + 1.4),
-        squeeze=False)
+    fw = (0.62 * len(SIZES) + 1.15) * len(gs) + 1.7
+    fh = 0.42 * len(chins) + 2.1
+    fig, axes = plt.subplots(1, len(gs), figsize=(fw, fh), squeeze=False)
+    # Margins in INCHES (then converted), set before the colorbar is created so
+    # it aligns with the panels: fixed fractions collide with the captions once
+    # the figure gets short, as in a two-column subset.
+    fig.subplots_adjust(bottom=1.15 / fh, top=1 - 0.8 / fh, left=0.75 / fw,
+                        right=1 - 0.2 / fw, wspace=0.32)
+    # Three decimals read as +0.000 everywhere when the whole range is ~1e-3.
+    cell_fmt = "+.4f" if lim < 0.01 else "+.3f"
     for i, g in enumerate(gs):
         ax = axes[0][i]
         M = np.full((len(chins), len(SIZES)), np.nan)
@@ -262,8 +268,8 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
         for r in range(len(chins)):
             for c in range(len(SIZES)):
                 if not np.isnan(M[r][c]):
-                    ax.text(c, r, f"{M[r][c]:+.3f}", ha="center", va="center",
-                            fontsize=7, color=INK)
+                    ax.text(c, r, format(M[r][c], cell_fmt), ha="center",
+                            va="center", fontsize=7, color=INK)
         ax.set_xticks(np.arange(-.5, len(SIZES), 1), minor=True)
         ax.set_yticks(np.arange(-.5, len(chins), 1), minor=True)
         ax.grid(which="minor", color=GRID, linewidth=1)
@@ -276,19 +282,19 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
     cb.ax.tick_params(labelsize=8, colors=MUTED)
     fig.suptitle(title or
                  "Robustness to Gaussian weight perturbation: muon vs adamw",
-                 fontsize=13.5, color=INK)
+                 fontsize=13 if len(SIZES) > 2 else 11, color=INK, y=1 - 0.18 / fh)
     # The interpretation sits under the panels: a second suptitle line collides
     # with the per-panel gamma titles.
     if n_clipped:
-        fig.text(0.5, -0.085,
+        fig.text(0.5, 0.05 / fh,
                  f"colour scale clipped at ±{lim:.3f} ({clip_pct}th pct); "
                  f"{n_clipped} cell(s) beyond it keep their printed value",
                  ha="center", fontsize=8, color=MUTED)
-    fig.text(0.5, -0.04, caption or
+    fig.text(0.5, 0.30 / fh, caption or
              "cell = perturbed held-out DCLM loss, tuned muon base minus tuned "
              "adamw base    |    negative (blue) = muon degrades less    |    "
              "white = no data",
-             ha="center", fontsize=9, color=MUTED)
+             ha="center", fontsize=9 if len(SIZES) > 2 else 7.5, color=MUTED)
     for ext in ("png", "pdf"):
         fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
     plt.close(fig)
