@@ -215,13 +215,19 @@ def degradation_diffs(raw, relative=False):
 
 
 def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
-         gammas=None, clip_pct=97):
+         gammas=None, clip_pct=97, sizes=None):
     # The colour scale is computed from the gammas actually shown, so a
     # restricted range rescales instead of being flattened by the large-gamma
     # values that dominate the full set.
     gs = [g for g in (gammas or GAMMAS) if diffs.get(g)]
     if not gs:
         raise SystemExit("no (size, chinchilla) cell has BOTH optimizers perturbed")
+    # Optional column subset. Colour limits and rows are recomputed from the
+    # included columns only, so a 300M/600M figure is not scaled (or padded
+    # with blank rows) by the small sizes.
+    SIZES = [z for z in globals()["SIZES"] if sizes is None or z in sizes]
+    diffs = {g: {k: v for k, v in diffs[g].items() if k[0] in SIZES} for g in gs}
+    chins = [c for c in chins if any((z, c) in diffs[g] for g in gs for z in SIZES)]
     vals = [v for g in gs for v in diffs[g].values()]
     # Robust limits: a single outlier (e.g. the 60M/c2 cell at gamma 0.01) would
     # otherwise set vmax for every panel and flatten all the real structure to
@@ -233,8 +239,10 @@ def plot(diffs, chins, out, title=None, cbar_label=None, caption=None,
     n_clipped = int((mag > lim).sum())
     norm = TwoSlopeNorm(vmin=-lim, vcenter=0.0, vmax=lim)
 
-    fig, axes = plt.subplots(1, len(gs), figsize=(3.1 * len(gs) + 1.4, 4.6),
-                             squeeze=False)
+    fig, axes = plt.subplots(
+        1, len(gs),
+        figsize=((0.5 * len(SIZES) + 0.7) * len(gs) + 1.6, 0.42 * len(chins) + 1.4),
+        squeeze=False)
     for i, g in enumerate(gs):
         ax = axes[0][i]
         M = np.full((len(chins), len(SIZES)), np.nan)
@@ -848,6 +856,16 @@ def main():
     plot(diffs, chins, os.path.join(a.out_dir, "perturb-muon-minus-adamw-small"),
          title="Robustness to Gaussian weight perturbation: muon vs adamw "
                "($\\gamma \\leq 0.02$)", gammas=small, clip_pct=85)
+    plot(deg, chins,
+         os.path.join(a.out_dir,
+                      "perturb-degradation-diff-muon-minus-adamw-small-300M-600M"),
+         title="Degradation under Gaussian weight perturbation: muon vs adamw "
+               "($\\gamma \\leq 0.02$), 300M and 600M",
+         cbar_label="muon - adamw  loss degradation",
+         caption="cell = (perturbed - unperturbed) for muon minus the same for "
+                 "adamw    |    negative (blue) = muon degrades less",
+         gammas=[g for g in GAMMAS if g <= 0.02], clip_pct=100,
+         sizes=["300M", "600M"])
     plot(deg, chins,
          os.path.join(a.out_dir,
                       "perturb-degradation-diff-muon-minus-adamw-small"),
