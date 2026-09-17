@@ -38,12 +38,20 @@ def rsync_to_gcs(local_source: str, gcs_dest: str) -> None:
     subprocess.check_call(["gsutil", "-m", "rsync", "-r", local_source, gcs_dest])
 
 
-def copy_gcs_directory(gcs_source: str, gcs_dest: str) -> None:
-    """Copy a directory from one GCS location to another."""
-    # Use rsync to copy directory contents
-    # First ensure destination exists by creating a dummy file, then remove it
-    # Actually, rsync will create the directory if needed
-    subprocess.check_call(["gsutil", "-m", "rsync", "-r", gcs_source + "/", gcs_dest + "/"])
+def copy_gcs_directory(gcs_source: str, gcs_dest: str, exclude: Optional[str] = None) -> None:
+    """Copy a directory from one GCS location to another.
+
+    ``exclude`` is a Python regex on the path relative to the source (gsutil
+    rsync -x). The perturbation uses it to leave final-unsharded/model.pt OUT of
+    the copy: the old behaviour copied the base's model.pt and then overwrote
+    it, so an upload that failed in between left the UNPERTURBED weights at the
+    perturbed path -- the exists-check then passed forever and the eval
+    reported zero degradation (30M c8 adamw, gamma 0.05: md5 identical to base).
+    """
+    cmd = ["gsutil", "-m", "rsync", "-r"]
+    if exclude:
+        cmd += ["-x", exclude]
+    subprocess.check_call(cmd + [gcs_source + "/", gcs_dest + "/"])
 
 def perturb_state_dict(
     state_dict: dict,
@@ -299,13 +307,21 @@ def main() -> int:
                 checkpoint_dir = parent_dir
             model_path = f"{checkpoint_dir}/final-unsharded/model.pt"
 
-            print(f"📦 [{seed}] Copying checkpoint → {checkpoint_dir}...")
-            copy_gcs_directory(original_checkpoint_dir, checkpoint_dir)
+            print(f"📦 [{seed}] Copying checkpoint (minus model.pt) → {checkpoint_dir}...")
+            copy_gcs_directory(original_checkpoint_dir, checkpoint_dir,
+                               exclude=r"(^|/)final-unsharded/model\.pt$")
 
             print(f"🔧 [{seed}] Perturbing with sigma={args.sigma}, seed={seed}...")
             perturbed_state_dict = perturb_state_dict(
                 state_dict, args.sigma, seed=seed, param_names=allow,
             )
+            # Never publish weights that equal the base under a perturbed name.
+            if args.sigma > 0 and all(
+                    torch.equal(perturbed_state_dict[k], state_dict[k])
+                    for k in state_dict):
+                raise RuntimeError(
+                    f"perturbation at sigma={args.sigma} left every tensor "
+                    "unchanged; refusing to upload")
 
             print(f"💾 [{seed}] Uploading model.pt...")
             save_model_to_gcs(perturbed_state_dict, model_path)
