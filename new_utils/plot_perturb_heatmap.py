@@ -712,6 +712,80 @@ def plot_degradation_vs_loss_combined(raw, out, gamma=0.01, facet="size"):
     print(f"wrote {out}.png / .pdf  ({2 * per} x {ncol})")
 
 
+# Perturbation strength matched to model size: larger models tolerate a larger
+# relative noise scale before the loss moves, so a single gamma leaves either
+# the small sizes saturated or the large ones near zero.
+MIXED_GAMMA = {"30M": 0.01, "60M": 0.02, "100M": 0.02, "300M": 0.03, "600M": 0.03}
+
+
+def plot_mixed_gamma(raw, chins, out, gamma_by_size=None, relative=False, clip_pct=97):
+    """One heatmap, chinchilla x size, where each SIZE COLUMN uses its own gamma.
+
+    Cell = muon degradation minus adamw degradation at that column's gamma --
+    the same quantity as perturb-degradation-diff-muon-minus-adamw, which draws
+    one panel per gamma instead. relative=True divides each optimizer's
+    degradation by its own unperturbed loss first (in percent).
+    """
+    gbs = gamma_by_size or MIXED_GAMMA
+    deg = degradation_diffs(raw, relative=relative)
+    M = np.full((len(chins), len(SIZES)), np.nan)
+    for ci, size in enumerate(SIZES):
+        g = gbs.get(size)
+        for (sz, chin), v in deg.get(g, {}).items():
+            if sz == size and chin in chins:
+                M[chins.index(chin)][ci] = v
+    vals = M[~np.isnan(M)]
+    if not vals.size:
+        print("mixed-gamma: no comparable cells"); return
+    mag = np.abs(vals)
+    lim = float(np.percentile(mag, clip_pct)) or float(mag.max()) or 1e-6
+    n_clipped = int((mag > lim).sum())
+    norm = TwoSlopeNorm(vmin=-lim, vcenter=0.0, vmax=lim)
+
+    fig, ax = plt.subplots(figsize=(6.4, 5.4))
+    im = ax.imshow(M, cmap=CMAP, norm=norm, aspect="auto", origin="lower")
+    ax.set_xticks(range(len(SIZES)))
+    ax.set_xticklabels([f"{z}\n$\\gamma$={gbs[z]:g}" for z in SIZES], fontsize=9)
+    ax.set_yticks(range(len(chins)))
+    ax.set_yticklabels([f"{c:g}" for c in chins], fontsize=9)
+    ax.set_xlabel("model size  (perturbation strength used for that column)",
+                  fontsize=9.5, color=MUTED)
+    ax.set_ylabel("chinchilla (token budget)", fontsize=10, color=INK)
+    for r in range(len(chins)):
+        for c in range(len(SIZES)):
+            if not np.isnan(M[r][c]):
+                ax.text(c, r, f"{M[r][c]:+.3f}", ha="center", va="center",
+                        fontsize=7.5, color=INK)
+    ax.set_xticks(np.arange(-.5, len(SIZES), 1), minor=True)
+    ax.set_yticks(np.arange(-.5, len(chins), 1), minor=True)
+    ax.grid(which="minor", color=GRID, linewidth=1)
+    ax.tick_params(which="minor", length=0)
+    ax.tick_params(colors=MUTED)
+    # Column groups share a gamma; a rule between groups makes that visible.
+    for c in range(1, len(SIZES)):
+        if gbs[SIZES[c]] != gbs[SIZES[c - 1]]:
+            ax.axvline(c - 0.5, color=INK, linewidth=1.6)
+    cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+    cb.set_label("muon - adamw  degradation, % of own unperturbed loss" if relative
+                 else "muon - adamw  loss degradation (nats)", fontsize=9.5, color=INK)
+    cb.ax.tick_params(labelsize=8, colors=MUTED)
+    ax.set_title(("Relative degradation" if relative else "Degradation")
+                 + " under Gaussian weight perturbation: muon vs adamw\n"
+                 "size-matched $\\gamma$ per column", fontsize=11.5, color=INK)
+    note = ("cell = (perturbed - unperturbed) for muon minus the same for adamw"
+            "    |    negative (blue) = muon degrades less    |    white = no data")
+    fig.text(0.5, -0.02, note, ha="center", fontsize=8, color=MUTED)
+    if n_clipped:
+        fig.text(0.5, -0.055, f"colour scale clipped at ±{lim:.3f} ({clip_pct}th pct); "
+                 f"{n_clipped} cell(s) beyond it keep their printed value",
+                 ha="center", fontsize=7.5, color=MUTED)
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf")
+
+
 def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser()
@@ -736,6 +810,12 @@ def main():
          caption="cell = (perturbed - unperturbed) for muon minus the same for "
                  "adamw    |    negative (blue) = muon degrades less    |    "
                  "white = no data")
+    plot_mixed_gamma(raw, chins, os.path.join(
+        a.out_dir, "perturb-degradation-diff-muon-minus-adamw-mixed-gamma"))
+    plot_mixed_gamma(raw, chins, os.path.join(
+        a.out_dir, "perturb-reldegradation-diff-muon-minus-adamw-mixed-gamma"),
+        relative=True)
+
     rel = degradation_diffs(raw, relative=True)
     REL_CAPTION = ("cell = 100 x (perturbed - unperturbed) / unperturbed for muon "
                    "minus the same for adamw    |    negative (blue) = muon "
