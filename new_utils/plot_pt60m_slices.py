@@ -386,14 +386,19 @@ def plot_wd_cells(cells, cache_root, out, wds=(0.0, 0.1, 0.2), sync_first=True):
     print(f"wrote {out}.png / .pdf  ({len(panels)} cell(s))")
 
 
-def plot_comp_all_sizes(sizes, cache_root, out, chinchilla=1.0, sync_first=True):
+def plot_comp_all_sizes(sizes, cache_root, out, chinchilla=1.0, sync_first=True,
+                        cells=None):
     """DCLM loss vs the adamw COMPONENT of the muon pair, muon_lr held at the
     table's tuned value, one line per size on a single axis (absolute loss).
     The tuned component is ringed. wd 0.1 / batch 1M cells only.
+
+    ``cells`` = [(size, chinchilla), ...] draws one line per cell instead of
+    one per size at a single chinchilla.
     """
     from new_utils.plot_pt_lr_dclm_all import tuned_lrs, tuned_adamw_lrs
     lines = []
-    for size in sizes:
+    cells = cells or [(size, chinchilla) for size in sizes]
+    for size, chinchilla in cells:
         cache = os.path.join(cache_root, size)
         if sync_first:
             sync(cache, size)
@@ -420,15 +425,17 @@ def plot_comp_all_sizes(sizes, cache_root, out, chinchilla=1.0, sync_first=True)
             continue
         xs = sorted(pts)
         ys = [sum(pts[x]) / len(pts[x]) for x in xs]
-        lines.append((size, mlr, comp, xs, ys))
+        lines.append((size, chinchilla, mlr, comp, xs, ys))
     if not lines:
         print("nothing to plot"); return
+    by_cell = len({c for _, c, *_ in lines}) > 1
 
     ramp = plt.cm.viridis([0.08, 0.32, 0.56, 0.8, 0.95][:len(lines)])
     fig, ax = plt.subplots(figsize=(6.8, 4.8))
-    for (size, mlr, comp, xs, ys), colour in zip(lines, ramp):
+    for (size, chin, mlr, comp, xs, ys), colour in zip(lines, ramp):
+        tag = f"{size} c{chin:g}" if by_cell else size
         ax.plot(xs, ys, "o-", color=colour, linewidth=1.9, markersize=5.5,
-                zorder=3, label=f"{size}  (muon lr {mlr:.2g})")
+                zorder=3, label=f"{tag}  (muon lr {mlr:.2g})")
         k = [i for i, x in enumerate(xs) if comp is not None and abs(x - comp) < 1e-12]
         if k:
             ax.scatter([xs[k[0]]], [ys[k[0]]], s=140, facecolors="none",
@@ -444,16 +451,17 @@ def plot_comp_all_sizes(sizes, cache_root, out, chinchilla=1.0, sync_first=True)
     labels.append("tuned component (table)")
     ax.legend(handles, labels, frameon=False, fontsize=9, loc="center right",
               bbox_to_anchor=(0.99, 0.74))
-    ax.set_title(f"Held-out DCLM loss vs adamw component at chinchilla "
-                 f"{chinchilla:g}  —  muon lr fixed at the tuned value, wd 0.1",
+    where = "" if by_cell else f" at chinchilla {chinchilla:g}"
+    ax.set_title(f"Held-out DCLM loss vs adamw component{where}"
+                 f"  —  muon lr fixed at the tuned value, wd 0.1",
                  fontsize=11, color=INK, pad=10)
     fig.tight_layout()
     for ext in ("png", "pdf"):
         fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {out}.png / .pdf  ({len(lines)} size(s))")
-    for size, mlr, comp, xs, ys in lines:
-        print(f"  {size}: " + "  ".join(f"comp {x:g} -> {y:.4f}{' *' if comp is not None and abs(x-comp)<1e-12 else ''}" for x, y in zip(xs, ys)))
+    for size, chin, mlr, comp, xs, ys in lines:
+        print(f"  {size} c{chin:g}: " + "  ".join(f"comp {x:g} -> {y:.4f}{' *' if comp is not None and abs(x-comp)<1e-12 else ''}" for x, y in zip(xs, ys)))
 
 
 def main():
@@ -472,6 +480,9 @@ def main():
     p.add_argument("--comp-all-sizes", nargs="*", metavar="SIZE",
                    help="one figure of loss vs adamw component at the tuned "
                         "muon lr across these sizes (default 30M 60M 100M)")
+    p.add_argument("--comp-cells", nargs="+", metavar="SIZE:CHIN",
+                   help="loss vs adamw component, one line per (size, "
+                        "chinchilla) cell on one axis, e.g. 30M:1 60M:0.5")
     p.add_argument("--wd-cells", nargs="+", metavar="SIZE:CHIN",
                    help="one figure, one panel per (size, chinchilla) cell, "
                         "loss vs weight decay for both optimizers at the "
@@ -486,6 +497,13 @@ def main():
                    help="plot runs evaluated on a different held-out set anyway")
     a = p.parse_args()
 
+    if a.comp_cells:
+        cells = [(c.split(":")[0], float(c.split(":")[1])) for c in a.comp_cells]
+        os.makedirs(a.out_dir, exist_ok=True)
+        plot_comp_all_sizes(None, "/mnt/localssd/pt-eval-cache",
+                            os.path.join(a.out_dir, "pt-dclm-vs-adamw-comp-cells"),
+                            sync_first=not a.no_sync, cells=cells)
+        return
     if a.wd_cells:
         cells = [(c.split(":")[0], float(c.split(":")[1])) for c in a.wd_cells]
         os.makedirs(a.out_dir, exist_ok=True)
