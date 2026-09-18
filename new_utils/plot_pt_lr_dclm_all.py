@@ -196,6 +196,9 @@ STAR_WINDOWS = []     # [(since, until-or-None)] in epoch seconds; several
                       # windows let separate training batches be starred while
                       # a restore that happened between them is not.
 STARRED = {}
+# (size, chinchilla, optimizer, lr, schema) -> eval filename of the run that
+# supplies that point, filled by load(); lets a manifest name the exact runs.
+RUN_FILES = {}
 MARK_LEGACY = False   # --mark-legacy: open markers on MuonExpt3-only points
 MARK_LOWEST = False   # --mark-lowest: square on each curve's lowest-loss LR
 
@@ -246,6 +249,8 @@ def load(size, d, only_schema=None, tuned_component=None, return_others=False):
                     .setdefault(opt, {})
                     .setdefault(float(m.group(2)), [])
                     .append((schema, cell["loss"])))
+                RUN_FILES[(size, float(m.group(1)), opt, float(m.group(2)),
+                           schema)] = fn
                 _mt = os.path.getmtime(os.path.join(d, fn))
                 if any(lo <= _mt and (hi is None or _mt < hi)
                        for lo, hi in STAR_WINDOWS):
