@@ -226,7 +226,7 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
             "adamw": {
                 0.25: 5.6e-2,
                 0.5: 4e-2,   # 2026-09-17: 5.6e-2 -> 4e-2 (grid minimum, 4.540 vs 4.552)
-                1: 1.4e-2,   # 2026-09-17: 2e-2 -> 1.4e-2 (grid minimum, 4.174 vs 4.183)
+                1: 2e-2,   # 2026-09-18: PTSweep-only grid minimum (4.1666; 1.4e-2 4.1704)
                 2: 1e-2,
                 4: 1e-2,
                 8: 1.4e-2,   # 2026-09-18: PTSweep-only grid minimum (1e-2 ties within 0.0003)
@@ -240,7 +240,7 @@ PT_LR_BY_MODEL: Dict[str, Dict] = {
                 # (muon_lr, adamw_component_lr)
                 0.25: (1.4e-2,5.6e-2),
                 0.5: (1e-2,4e-2),   # component follows adamw row; muon lr pending retune
-                1: (1.4e-2,1.4e-2),   # component follows adamw row; muon lr pending retune
+                1: (1.4e-2,2e-2),   # comp-2e-2 sweep min: 1.4e-2 3.998 (2e-2 ties)
                 2: (1e-2,1e-2),
                 4: (1.4e-2,1e-2),
                 8: (1e-2,1.4e-2),
