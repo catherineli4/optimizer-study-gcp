@@ -315,6 +315,77 @@ def plot_wd_pinned_all_sizes(sizes, cache_root, out, chinchilla=1.0,
     print(f"wrote {out}.png / .pdf  ({len(panels)} size(s))")
 
 
+def plot_wd_cells(cells, cache_root, out, wds=(0.0, 0.1, 0.2), sync_first=True):
+    """One panel per (size, chinchilla) cell: DCLM loss vs weight decay for
+    BOTH optimizers at the table's tuned LRs. adamw varies its single wd;
+    muon varies the Muon group's decay with the AdamW group pinned at 0.1
+    (the -muonwd family), so wd 0.1 is the tuned base for both.
+    """
+    from new_utils.plot_pt_lr_dclm_all import tuned_lrs, tuned_adamw_lrs
+    panels = []
+    for size, chin in cells:
+        cache = os.path.join(cache_root, size)
+        if sync_first:
+            sync(cache, size)
+        runs = [r for r in load(cache, size)
+                if r["chinchilla"] == chin and r["batch_size"] == "1M"
+                and r["num_tokens"] == 4193280]
+        alr = tuned_lrs(size)["adamw"].get(chin)
+        mlr = tuned_lrs(size)["muon"].get(chin)
+        comp = tuned_adamw_lrs(size).get(chin)
+        series = {}
+        for r in runs:
+            if r["optimizer"] == "adamw" and alr is not None and r["lr"] == alr:
+                series.setdefault("adamw", {})[r["weight_decay"]] = r["loss"]
+            elif (r["optimizer"] == "muon" and mlr is not None
+                  and r["lr"] == mlr and r["adamw_component"] == comp
+                  and r["adamw_wd"] == 0.1
+                  and (r["muon_only"] or r["weight_decay"] == 0.1)):
+                series.setdefault("muon", {})[r["weight_decay"]] = r["loss"]
+        for opt in list(series):
+            series[opt] = {w: v for w, v in series[opt].items() if w in wds}
+            missing = [w for w in wds if w not in series[opt]]
+            if missing:
+                print(f"{size} c{chin:g} {opt}: no eval at wd {missing}")
+        if not series:
+            print(f"{size} c{chin:g}: nothing at the table LRs")
+            continue
+        panels.append((size, chin, alr, (mlr, comp), series))
+    if not panels:
+        print("nothing to plot"); return
+
+    fig, axes = plt.subplots(1, len(panels), figsize=(3.3 * len(panels), 3.9),
+                             sharex=True)
+    axes = list(axes) if len(panels) > 1 else [axes]
+    for ax, (size, chin, alr, (mlr, comp), series) in zip(axes, panels):
+        for opt in ("adamw", "muon"):
+            if opt not in series:
+                continue
+            xs = sorted(series[opt]); ys = [series[opt][x] for x in xs]
+            lab = f"adamw lr {alr:.2g}" if opt == "adamw" \
+                else f"muon ({mlr:.2g}, {comp:.2g})"
+            ax.plot(xs, ys, "o-", color=COLOR[opt], linewidth=1.8,
+                    markersize=5.5, zorder=3, label=lab)
+            if 0.1 in series[opt]:
+                ax.scatter([0.1], [series[opt][0.1]], s=140, facecolors="none",
+                           edgecolors=INK, linewidths=1.4, zorder=4)
+        ax.set_title(f"{size}  chinchilla {chin:g}", fontsize=10, color=INK)
+        ax.set_xticks(list(wds))
+        ax.set_xlabel("weight decay", fontsize=9, color=MUTED)
+        ax.grid(True, alpha=0.25, linewidth=0.6)
+        ax.tick_params(labelsize=8, colors=MUTED)
+        ax.legend(frameon=False, fontsize=8, loc="best")
+    axes[0].set_ylabel(f"{LABEL} loss", fontsize=10, color=INK)
+    fig.suptitle("Held-out DCLM loss vs weight decay at the tuned LRs  —  "
+                 "muon: Muon-group decay, AdamW group held at 0.1; ring = tuned base",
+                 fontsize=11, color=INK)
+    fig.tight_layout()
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf  ({len(panels)} cell(s))")
+
+
 def plot_comp_all_sizes(sizes, cache_root, out, chinchilla=1.0, sync_first=True):
     """DCLM loss vs the adamw COMPONENT of the muon pair, muon_lr held at the
     table's tuned value, one line per size on a single axis (absolute loss).
@@ -401,6 +472,10 @@ def main():
     p.add_argument("--comp-all-sizes", nargs="*", metavar="SIZE",
                    help="one figure of loss vs adamw component at the tuned "
                         "muon lr across these sizes (default 30M 60M 100M)")
+    p.add_argument("--wd-cells", nargs="+", metavar="SIZE:CHIN",
+                   help="one figure, one panel per (size, chinchilla) cell, "
+                        "loss vs weight decay for both optimizers at the "
+                        "table LRs, e.g. 30M:1 60M:0.5 60M:1 60M:2 100M:1")
     p.add_argument("--chinchilla", type=float, default=None,
                    help="restrict to one token budget, so a size whose sweep "
                         "covers several does not bury the cell of interest")
@@ -411,6 +486,13 @@ def main():
                    help="plot runs evaluated on a different held-out set anyway")
     a = p.parse_args()
 
+    if a.wd_cells:
+        cells = [(c.split(":")[0], float(c.split(":")[1])) for c in a.wd_cells]
+        os.makedirs(a.out_dir, exist_ok=True)
+        plot_wd_cells(cells, "/mnt/localssd/pt-eval-cache",
+                      os.path.join(a.out_dir, "pt-dclm-vs-wd-cells"),
+                      sync_first=not a.no_sync)
+        return
     if a.comp_all_sizes is not None:
         sizes = a.comp_all_sizes or ["30M", "60M", "100M"]
         chin = 1.0 if a.chinchilla is None else a.chinchilla
