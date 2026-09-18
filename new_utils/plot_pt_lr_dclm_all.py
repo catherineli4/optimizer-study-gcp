@@ -165,6 +165,8 @@ EXCLUDE = {
     ("300M", 4.0, "muon", 2e-2),
     ("30M", 1.0, "adamw", 5e-3),    # 5.09 below 7e-3's 5.18, off the curve's low-LR climb
     ("60M", 0.5, "adamw", 5.6e-2),  # 4.54 vs 4.58 at 4e-2 and 4.77 at 8e-2 (noisy cell)
+    ("300M", 1.0, "muon", 1e-3),
+    ("300M", 1.0, "muon", 2.5e-3),
 }
 # LR-range cuts: every run of (size, chinchilla, optimizer) with swept LR <= the
 # given value is dropped. The 100M c2/c4 adamw sweeps carry a tail of runs at
