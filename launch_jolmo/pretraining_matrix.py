@@ -521,15 +521,16 @@ def _pt_run_name(chinchilla, opt: str, tag: str, scheduler: str) -> str:
     The same trained model can exist under two naming schemas:
     ``MuonExpt3-…-<sched>`` (this matrix) and the LR×BS sweep's
     reference-batch cell ``PTSweep<size>-…-wd0.1-bs1M-wsd`` — an identical
-    training configuration. Resolve to whichever name already exists on GCS
-    (MuonExpt3 preferred); a cell trained nowhere keeps the MuonExpt3 name.
+    training configuration. Resolve to whichever name already exists on GCS,
+    PTSweep preferred (the current pipeline's run; it is the one the pt-lr
+    grid plots and the one listed in the grid-models manifest — the MuonExpt3
+    twin comes from the old cluster and is only used where no PTSweep run
+    exists); a cell trained nowhere keeps the MuonExpt3 name.
     """
     legacy = f"MuonExpt3-{MODEL_TYPE}-chinchilla-{chinchilla}-{opt}-{tag}-{scheduler}"
     if scheduler != "wsd":
         return legacy
     runs = _existing_jolmo_runs()
-    if legacy in runs:
-        return legacy
     twin = (f"PTSweep{_SIZE}-{MODEL_TYPE}-chinchilla-{chinchilla:g}"
             f"-{opt}-{tag}-wd0.1-bs1M-wsd")
     if twin in runs:
