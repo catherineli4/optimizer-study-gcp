@@ -245,9 +245,31 @@ def load(size, d, only_schema=None, tuned_component=None, return_others=False):
                         (float(m.group(1)), opt, float(m.group(2))))
                 ntok.add(cell["num_tokens"])
             break
+    for _by_lr in (v for d in out.values() for v in d.values()):
+        _prefer_ptsweep(_by_lr)
+    for _by_lr in (v for d in others.values() for v in d.values()):
+        _prefer_ptsweep(_by_lr)
     if return_others:
         return out, ntok, others
     return out, ntok
+
+
+# The two naming schemas are independent trainings of the same recipe, but the
+# MuonExpt3 runs come from the old cluster (different token budget at 30M, and
+# some March-era outliers, e.g. 60M c8 muon 2e-2 at 3.90 vs 3.81). Where the
+# current PTSweep pipeline has a run for an LR, use it alone instead of the
+# mean of both; MuonExpt3 only fills LRs that PTSweep never trained.
+PREFER_PTSWEEP = True
+
+
+def _prefer_ptsweep(by_lr):
+    """by_lr: {lr: [(schema, loss), ...]} — edited in place."""
+    if not PREFER_PTSWEEP:
+        return
+    for lr, runs in by_lr.items():
+        pts = [r for r in runs if r[0] == "PTSweep"]
+        if pts and len(pts) < len(runs):
+            by_lr[lr] = pts
 
 
 OTHER_STYLE = dict(linestyle=(0, (3, 2)), marker="s", markersize=3.6,
