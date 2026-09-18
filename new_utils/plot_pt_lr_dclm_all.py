@@ -194,6 +194,7 @@ STAR_WINDOWS = []     # [(since, until-or-None)] in epoch seconds; several
                       # windows let separate training batches be starred while
                       # a restore that happened between them is not.
 STARRED = {}
+MARK_LEGACY = False   # --mark-legacy: open markers on MuonExpt3-only points
 
 
 def load(size, d, only_schema=None, tuned_component=None, return_others=False):
@@ -589,7 +590,8 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                 # Open marker = the point comes only from a MuonExpt3-named
                 # run (old cluster; no PTSweep run exists at that LR).
                 legacy = [i for i, x in enumerate(lrs)
-                          if all(sch == "MuonExpt3" for sch, _ in series[x])]
+                          if MARK_LEGACY
+                          and all(sch == "MuonExpt3" for sch, _ in series[x])]
                 if legacy:
                     ax.scatter([lrs[i] for i in legacy], [mean[i] for i in legacy],
                                marker="o", s=26, facecolors="white",
@@ -645,9 +647,10 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
     handles.append(plt.Line2D([], [], color=MUTED, marker="s", markersize=10,
                               markerfacecolor="none", markeredgewidth=1.5,
                               linestyle="none", label="lowest-loss LR"))
-    handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=6,
-                              markerfacecolor="white", markeredgewidth=1.2,
-                              linestyle="none", label="MuonExpt3 run (old cluster)"))
+    if MARK_LEGACY:
+        handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=6,
+                                  markerfacecolor="white", markeredgewidth=1.2,
+                                  linestyle="none", label="MuonExpt3 run (old cluster)"))
     if any(STARRED.values()):
         import datetime
         since = datetime.datetime.utcfromtimestamp(
@@ -688,6 +691,8 @@ def main():
                    metavar="SIZE",
                    help="sizes whose figure plots each naming schema as its "
                         "own line instead of averaging them (default: 100M)")
+    p.add_argument("--mark-legacy", action="store_true",
+                   help="draw points that come only from MuonExpt3 runs as open markers")
     p.add_argument("--star-since", default=None, metavar="UTC",
                    help="star every point whose eval was written on/after this "
                         "UTC time, e.g. 2026-09-17T16:00")
@@ -697,7 +702,8 @@ def main():
                    help="additional UTC window to star; repeatable")
     a = p.parse_args()
     import calendar, datetime
-    global STAR_SINCE, STAR_UNTIL
+    global STAR_SINCE, STAR_UNTIL, MARK_LEGACY
+    MARK_LEGACY = a.mark_legacy
     _ts = lambda x: calendar.timegm(datetime.datetime.fromisoformat(x).timetuple())
     if a.star_since:
         STAR_SINCE = _ts(a.star_since)
