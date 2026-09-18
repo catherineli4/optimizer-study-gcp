@@ -582,12 +582,12 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                     ax.scatter([lrs[i] for i in new], [mean[i] for i in new],
                                marker="*", s=75, color=COLOR[opt],
                                edgecolors=INK, linewidths=0.5, zorder=6)
-                # Square = the sweep's lowest-loss LR (adamw only, on request):
-                # drawn larger than the table ring so that when the two agree
-                # the square frames the circle, and when they differ the gap
+                # Square = the sweep's lowest-loss LR (both optimizers): drawn
+                # larger than the table ring so that when the two agree the
+                # square frames the circle, and when they differ the gap
                 # between "what the table declares" and "what the sweep found"
                 # is visible at a glance.
-                if opt == "adamw" and len(lrs) > 1:
+                if len(lrs) > 1:
                     kb = min(range(len(lrs)), key=lambda i: mean[i])
                     ax.scatter([lrs[kb]], [mean[kb]], s=210, marker="s",
                                facecolors="none", edgecolors=COLOR[opt],
@@ -630,9 +630,9 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=8,
                               markerfacecolor="none", linestyle="none",
                               label="table LR (annotated)"))
-    handles.append(plt.Line2D([], [], color=COLOR["adamw"], marker="s", markersize=10,
+    handles.append(plt.Line2D([], [], color=MUTED, marker="s", markersize=10,
                               markerfacecolor="none", markeredgewidth=1.5,
-                              linestyle="none", label="adamw lowest-loss LR"))
+                              linestyle="none", label="lowest-loss LR"))
     if any(STARRED.values()):
         import datetime
         since = datetime.datetime.utcfromtimestamp(
