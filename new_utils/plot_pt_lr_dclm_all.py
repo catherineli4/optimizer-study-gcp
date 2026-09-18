@@ -582,6 +582,14 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                     ax.scatter([lrs[i] for i in new], [mean[i] for i in new],
                                marker="*", s=75, color=COLOR[opt],
                                edgecolors=INK, linewidths=0.5, zorder=6)
+                # Open marker = the point comes only from a MuonExpt3-named
+                # run (old cluster; no PTSweep run exists at that LR).
+                legacy = [i for i, x in enumerate(lrs)
+                          if all(sch == "MuonExpt3" for sch, _ in series[x])]
+                if legacy:
+                    ax.scatter([lrs[i] for i in legacy], [mean[i] for i in legacy],
+                               marker="o", s=26, facecolors="white",
+                               edgecolors=COLOR[opt], linewidths=1.2, zorder=4)
                 # Square = the sweep's lowest-loss LR (both optimizers): drawn
                 # larger than the table ring so that when the two agree the
                 # square frames the circle, and when they differ the gap
@@ -633,6 +641,9 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
     handles.append(plt.Line2D([], [], color=MUTED, marker="s", markersize=10,
                               markerfacecolor="none", markeredgewidth=1.5,
                               linestyle="none", label="lowest-loss LR"))
+    handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=6,
+                              markerfacecolor="white", markeredgewidth=1.2,
+                              linestyle="none", label="MuonExpt3 run (old cluster)"))
     if any(STARRED.values()):
         import datetime
         since = datetime.datetime.utcfromtimestamp(
