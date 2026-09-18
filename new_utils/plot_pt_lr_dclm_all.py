@@ -197,6 +197,7 @@ STAR_WINDOWS = []     # [(since, until-or-None)] in epoch seconds; several
                       # a restore that happened between them is not.
 STARRED = {}
 MARK_LEGACY = False   # --mark-legacy: open markers on MuonExpt3-only points
+MARK_LOWEST = False   # --mark-lowest: square on each curve's lowest-loss LR
 
 
 def load(size, d, only_schema=None, tuned_component=None, return_others=False):
@@ -603,7 +604,7 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
                 # square frames the circle, and when they differ the gap
                 # between "what the table declares" and "what the sweep found"
                 # is visible at a glance.
-                if len(lrs) > 1:
+                if MARK_LOWEST and len(lrs) > 1:
                     kb = min(range(len(lrs)), key=lambda i: mean[i])
                     ax.scatter([lrs[kb]], [mean[kb]], s=210, marker="s",
                                facecolors="none", edgecolors=COLOR[opt],
@@ -646,9 +647,10 @@ def plot_grid(all_data, all_ntok, out, all_others=None):
     handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=8,
                               markerfacecolor="none", linestyle="none",
                               label="table LR (annotated)"))
-    handles.append(plt.Line2D([], [], color=MUTED, marker="s", markersize=10,
-                              markerfacecolor="none", markeredgewidth=1.5,
-                              linestyle="none", label="lowest-loss LR"))
+    if MARK_LOWEST:
+        handles.append(plt.Line2D([], [], color=MUTED, marker="s", markersize=10,
+                                  markerfacecolor="none", markeredgewidth=1.5,
+                                  linestyle="none", label="lowest-loss LR"))
     if MARK_LEGACY:
         handles.append(plt.Line2D([], [], color=MUTED, marker="o", markersize=6,
                                   markerfacecolor="white", markeredgewidth=1.2,
@@ -693,6 +695,8 @@ def main():
                    metavar="SIZE",
                    help="sizes whose figure plots each naming schema as its "
                         "own line instead of averaging them (default: 100M)")
+    p.add_argument("--mark-lowest", action="store_true",
+                   help="draw a square on each curve's lowest-loss LR")
     p.add_argument("--mark-legacy", action="store_true",
                    help="draw points that come only from MuonExpt3 runs as open markers")
     p.add_argument("--star-since", default=None, metavar="UTC",
@@ -704,8 +708,9 @@ def main():
                    help="additional UTC window to star; repeatable")
     a = p.parse_args()
     import calendar, datetime
-    global STAR_SINCE, STAR_UNTIL, MARK_LEGACY
+    global STAR_SINCE, STAR_UNTIL, MARK_LEGACY, MARK_LOWEST
     MARK_LEGACY = a.mark_legacy
+    MARK_LOWEST = a.mark_lowest
     _ts = lambda x: calendar.timegm(datetime.datetime.fromisoformat(x).timetuple())
     if a.star_since:
         STAR_SINCE = _ts(a.star_since)
