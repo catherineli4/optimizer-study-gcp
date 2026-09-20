@@ -873,7 +873,7 @@ perturbed_muon_models  = build_perturbed_models(pretrain_muon_wsd)
 # Gaussian perturbation of EVERY tuned-LR base this size has a table entry for,
 # over a gamma ladder one decade above LADDER_GAMMAS' top mantissas. gamma is
 # the relative noise scale: std = gamma * ||W||_F / sqrt(numel) per tensor.
-PERTURB_WIDE_GAMMAS = [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.1, 0.13]
+PERTURB_WIDE_GAMMAS = [0.003, 0.005, 0.007, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.1, 0.13]
 _perturb_wide_chins = sorted(
     set(PT_LR.get("wsd", {}).get("adamw", {})) | set(PT_LR.get("wsd", {}).get("muon", {})))
 perturb_wide_bases = tuned_bases_for(_perturb_wide_chins)
