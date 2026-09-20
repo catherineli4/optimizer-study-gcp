@@ -92,14 +92,17 @@ def tuned_table(size):
 
 
 def base_names(size, chin, opt, cell):
-    """Both naming schemas for a tuned cell; caller keeps whichever exists."""
+    """Both naming schemas for a tuned cell; caller keeps the first that
+    exists. PTSweep (current pipeline) first: it is the run the pt-lr grid
+    plots and the grid-models manifest lists; the MuonExpt3 twin is the old
+    cluster's run and only stands in where no PTSweep run exists."""
     mt = MODEL_TYPE[size]
     if opt == "adamw":
         tag = f"lr{lr_tag(float(cell))}"
     else:
         tag = f"muonlr{lr_tag(cell[0])}-adamwlr{lr_tag(cell[1])}"
-    return [f"MuonExpt3-{mt}-chinchilla-{chin:g}-{opt}-{tag}-wsd",
-            f"PTSweep{size}-{mt}-chinchilla-{chin:g}-{opt}-{tag}-wd0.1-bs1M-wsd"]
+    return [f"PTSweep{size}-{mt}-chinchilla-{chin:g}-{opt}-{tag}-wd0.1-bs1M-wsd",
+            f"MuonExpt3-{mt}-chinchilla-{chin:g}-{opt}-{tag}-wsd"]
 
 
 def listing(size, cache):
