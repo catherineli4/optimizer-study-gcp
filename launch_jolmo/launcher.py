@@ -450,11 +450,11 @@ if FT_REPLAY_SWEEPS:
                          + tuple(_s.label for _s in FT_REPLAY_SWEEPS))
     executor.stage_group(f"{_rep}-evals",
                          tuple(f"{_s.label}-evals" for _s in FT_REPLAY_SWEEPS))
-# Plain + DCLM-replay FT over the hi5 bases of the retuned cells
-# (ft_sweep.HI5CHG_*). Bases INSIDE the groups: dependencies resolve by identity.
+# Plain FT over the hi5 bases of the retuned cells (ft_sweep.HI5CHG_SWEEPS).
+# Bases INSIDE the group: dependencies resolve by identity. Replay FT stays on
+# the tuned bases only (ft-replay-<size>, narrowed with OPTIM_REPLAY_*).
 from launch_jolmo.ft_sweep import HI5CHG_SWEEPS as FT_HI5CHG_SWEEPS
-from launch_jolmo.ft_sweep import HI5CHG_REPLAY_SWEEPS as FT_HI5CHG_REPLAY_SWEEPS
-for _sweep in tuple(FT_HI5CHG_SWEEPS) + tuple(FT_HI5CHG_REPLAY_SWEEPS):
+for _sweep in FT_HI5CHG_SWEEPS:
     executor.stage(_sweep.label, _sweep.models())
     executor.stage(f"{_sweep.label}-evals", _sweep.evals())
 if FT_HI5CHG_SWEEPS:
@@ -464,12 +464,6 @@ if FT_HI5CHG_SWEEPS:
                          + tuple(_s.label for _s in FT_HI5CHG_SWEEPS))
     executor.stage_group(f"{_hc}-evals",
                          tuple(f"{_s.label}-evals" for _s in FT_HI5CHG_SWEEPS))
-    _hr = f"ft-replay-hi5chg-{_SIZE.lower()}"
-    executor.stage(f"{_hr}-bases", [_s.base for _s in FT_HI5CHG_REPLAY_SWEEPS])
-    executor.stage_group(_hr, (f"{_hr}-bases",)
-                         + tuple(_s.label for _s in FT_HI5CHG_REPLAY_SWEEPS))
-    executor.stage_group(f"{_hr}-evals",
-                         tuple(f"{_s.label}-evals" for _s in FT_HI5CHG_REPLAY_SWEEPS))
 # Same, over the c1/c2/c4/c8 hi5 bases.
 _hi5_c1248_base_names = {
     _m.run_name

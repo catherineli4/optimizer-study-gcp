@@ -496,7 +496,7 @@ ALLCHIN_SWEEPS: Tuple[FtSweep, ...] = tuple(_allchin_sweeps)
 # reused rather than retrained.
 # ---------------------------------------------------------------------------
 
-FT_REPLAY_SIZES = {"60M", "100M"}
+FT_REPLAY_SIZES = {"30M", "60M", "100M"}
 FT_REPLAY_SWEEP_FRACTIONS: Tuple[float, ...] = (0.1, 0.2, 0.3)
 
 _replay_sweeps = []
@@ -524,7 +524,15 @@ if _WANT_FT:
                     f"has no tuned LR for; available: "
                     f"{[f'{c:g}' for c in _chins]}")
             _chins = [c for c in _chins if c in _keep]
+        # $OPTIM_REPLAY_OPTIMIZERS=muon (or adamw) keeps only that optimizer's
+        # tuned bases, e.g. for the 30M muon c4/c8 retune.
+        _want_o = _os.environ.get("OPTIM_REPLAY_OPTIMIZERS", "").strip()
+        _keep_o = {o.strip() for o in _want_o.replace(",", " ").split()} if _want_o else None
+        if _keep_o and not _keep_o <= {"adamw", "muon"}:
+            raise ValueError(f"OPTIM_REPLAY_OPTIMIZERS={_want_o!r}; use adamw and/or muon")
         for _b in _tuned_bases_for(_chins):
+            if _keep_o and getattr(_b, "optimizer", "adamw") not in _keep_o:
+                continue
             _replay_sweeps.append(FtSweep(
                 base=_b,
                 replay_fractions=FT_REPLAY_SWEEP_FRACTIONS,
@@ -537,7 +545,7 @@ REPLAY_SWEEPS: Tuple[FtSweep, ...] = tuple(_replay_sweeps)
 
 
 # ---------------------------------------------------------------------------
-# Plain FT and DCLM-replay FT over the above-optimal (hi5) bases of the cells
+# Plain FT over the above-optimal (hi5) bases of the cells
 # whose tuned LR moved in the 2026-09-17/18 retune (lr_bs_sweep
 # HI5_CHANGED_SWEEPS). Bases are taken as the sweep names them (PTSweep-first,
 # like the grid manifest) — NOT passed through _canonical_base, which would
@@ -545,7 +553,7 @@ REPLAY_SWEEPS: Tuple[FtSweep, ...] = tuple(_replay_sweeps)
 # run names, so any that exist already are skipped by the exists-check.
 # ---------------------------------------------------------------------------
 
-_hi5chg_ft, _hi5chg_replay = [], []
+_hi5chg_ft = []
 if _WANT_FT:
     from launch_jolmo.lr_bs_sweep import HI5_CHANGED_SWEEPS as _HI5CHG
     _seen_c = set()
@@ -562,15 +570,13 @@ if _WANT_FT:
                 continue
             _seen_c.add(_m.run_name)
             _hi5chg_ft.append(FtSweep(base=_m, label_suffix="-hi5chg"))
-            _hi5chg_replay.append(FtSweep(
-                base=_m, replay_fractions=FT_REPLAY_SWEEP_FRACTIONS,
-                label_suffix="-hi5chg-replay"))
     if _hi5chg_ft or _skipped_c:
         print(f"[ft-hi5chg] {len(_hi5chg_ft)} above-optimal base(s) of the retuned "
               f"cells; {len(_skipped_c)} not pretrained, skipped: {_skipped_c}")
 
 HI5CHG_SWEEPS: Tuple[FtSweep, ...] = tuple(_hi5chg_ft)
-HI5CHG_REPLAY_SWEEPS: Tuple[FtSweep, ...] = tuple(_hi5chg_replay)
+# Replay FT is deliberately NOT built over the hi5 ladder: the replay axis is
+# studied on the tuned (best-LR) bases only -- see REPLAY_SWEEPS above.
 
 # ---------------------------------------------------------------------------
 # Cross-size batch-size FT study: the best-LR pretrain at each
