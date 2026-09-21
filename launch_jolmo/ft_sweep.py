@@ -549,17 +549,25 @@ _hi5chg_ft, _hi5chg_replay = [], []
 if _WANT_FT:
     from launch_jolmo.lr_bs_sweep import HI5_CHANGED_SWEEPS as _HI5CHG
     _seen_c = set()
+    _skipped_c = []
     for _hs in _HI5CHG:
         for _m in _hs.models():
             if _m.run_name in _seen_c:
+                continue
+            # Only bases already pretrained: a base absent from GCS would be
+            # trained by the -bases dependency stage, and these sweeps are
+            # meant to finetune what exists, not to extend the LR ladder.
+            if _m.run_name not in _existing_jolmo_runs():
+                _skipped_c.append(_m.run_name)
                 continue
             _seen_c.add(_m.run_name)
             _hi5chg_ft.append(FtSweep(base=_m, label_suffix="-hi5chg"))
             _hi5chg_replay.append(FtSweep(
                 base=_m, replay_fractions=FT_REPLAY_SWEEP_FRACTIONS,
                 label_suffix="-hi5chg-replay"))
-    if _hi5chg_ft:
-        print(f"[ft-hi5chg] {len(_hi5chg_ft)} above-optimal base(s) of the retuned cells")
+    if _hi5chg_ft or _skipped_c:
+        print(f"[ft-hi5chg] {len(_hi5chg_ft)} above-optimal base(s) of the retuned "
+              f"cells; {len(_skipped_c)} not pretrained, skipped: {_skipped_c}")
 
 HI5CHG_SWEEPS: Tuple[FtSweep, ...] = tuple(_hi5chg_ft)
 HI5CHG_REPLAY_SWEEPS: Tuple[FtSweep, ...] = tuple(_hi5chg_replay)
