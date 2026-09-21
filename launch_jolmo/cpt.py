@@ -36,9 +36,11 @@ CPT_RANK_MICROBATCH_SIZE: int = CPT_GLOBAL_BATCH_SIZE // 8
 # For muon:  list of (muon_lr, adamw_component_lr) pairs.
 # Set to a single-element list to use a fixed LR instead of sweeping.
 CPT_LR_SWEEP: Dict[str, List] = {
-    "adamw": [1e-3, 2e-3, 5e-3, 1e-2, 5e-4,8e-4, 2e-4, 1e-4, 3e-4, 4e-4, 6e-4, 7e-4, 9e-4, 1.4e-3, 1.7e-3, 2.3e-3, 2.8e-3, 3e-3, 3.5e-3, 4e-3, 4.2e-3, 4.7e-3 ],
-    # "muon" : [(5e-3, 1e-4), (6e-3, 1e-4), (7e-3, 1e-4)],
-    "muon":  [(6e-4, 1e-4), (8e-4, 1e-4), (1e-3, 1e-4), (2e-3, 1e-4), (4e-3, 1e-4), (5e-3, 1e-4), (6e-3, 1e-4), (7e-3, 1e-4), (8e-3, 1e-4), (9e-3, 1e-4), (1e-2, 1e-4), (1.4e-3, 1e-4), (1.7e-3, 1e-4), (2e-2, 1e-4),],
+    # 2026-09-21: back to the original 8 x 8 grid (the widened 22 x 14 grid of
+    # 50bf3de is in git history) -- the extra points cost ~3x the FT cells for
+    # no change in the tuned optimum.
+    "adamw": [1e-3, 2e-3, 5e-3, 1e-2, 5e-4,8e-4, 2e-4, 1e-4],
+    "muon":  [(6e-4, 1e-4), (8e-4, 1e-4), (1e-3, 1e-4), (2e-3, 1e-4), (4e-3, 1e-4), (8e-3, 1e-4), (1e-2, 1e-4), (2e-2, 1e-4),],
 }
 
 
