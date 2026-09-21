@@ -1,0 +1,46 @@
+# Exact runs behind pt-dclm-vs-wd-cells.png and pt-dclm-vs-adamw-comp-cells.png
+# (table LRs as of 2026-09-18 when the figures were drawn)
+# columns: cell  figure  optimizer  setting | run_name
+#   GCS: gs://cmu-gpucloud-catheri4/Optim-<size>-tuning/JolmoModel/<run_name>/final-unsharded/{model.pt,config.json}
+#   HF : https://huggingface.co/muon2/pt-wd-comp-cells/tree/main/<run_name>
+
+30M c1     wd       adamw  adamw lr 4.0e-2, wd 0                            | PTSweep30M-0.03B-chinchilla-1-adamw-lr4.0e-2-wd0-bs1M-wsd
+30M c1     wd       muon   muon (1.0e-2, 4.0e-2), muon-wd 0, adamw-wd 0.1   | PTSweep30M-0.03B-chinchilla-1-muon-muonlr1.0e-2-adamwlr4.0e-2-wd0.1-muonwd0-bs1M-wsd
+30M c1     wd       adamw  adamw lr 4.0e-2, wd 0.1                          | PTSweep30M-0.03B-chinchilla-1-adamw-lr4.0e-2-wd0.1-bs1M-wsd
+30M c1     wd+comp  muon   muon (1.0e-2, 4.0e-2), muon-wd 0.1, adamw-wd 0.1 | PTSweep30M-0.03B-chinchilla-1-muon-muonlr1.0e-2-adamwlr4.0e-2-wd0.1-bs1M-wsd
+30M c1     wd       adamw  adamw lr 4.0e-2, wd 0.2                          | PTSweep30M-0.03B-chinchilla-1-adamw-lr4.0e-2-wd0.2-bs1M-wsd
+30M c1     wd       muon   muon (1.0e-2, 4.0e-2), muon-wd 0.2, adamw-wd 0.1 | PTSweep30M-0.03B-chinchilla-1-muon-muonlr1.0e-2-adamwlr4.0e-2-wd0.1-muonwd0.2-bs1M-wsd
+30M c1     comp     muon   muon lr 1.0e-2, adamw comp 2.8e-2, wd 0.1        | PTSweep30M-0.03B-chinchilla-1-muon-muonlr1.0e-2-adamwlr2.8e-2-wd0.1-bs1M-wsd
+30M c1     comp     muon   muon lr 1.0e-2, adamw comp 5.6e-2, wd 0.1        | PTSweep30M-0.03B-chinchilla-1-muon-muonlr1.0e-2-adamwlr5.6e-2-wd0.1-bs1M-wsd
+60M c0.5   wd       adamw  adamw lr 4.0e-2, wd 0                            | PTSweep60M-0.06B-chinchilla-0.5-adamw-lr4.0e-2-wd0-bs1M-wsd
+60M c0.5   wd       muon   muon (1.0e-2, 4.0e-2), muon-wd 0, adamw-wd 0.1   | PTSweep60M-0.06B-chinchilla-0.5-muon-muonlr1.0e-2-adamwlr4.0e-2-wd0.1-muonwd0-bs1M-wsd
+60M c0.5   wd       adamw  adamw lr 4.0e-2, wd 0.1                          | PTSweep60M-0.06B-chinchilla-0.5-adamw-lr4.0e-2-wd0.1-bs1M-wsd
+60M c0.5   wd+comp  muon   muon (1.0e-2, 4.0e-2), muon-wd 0.1, adamw-wd 0.1 | PTSweep60M-0.06B-chinchilla-0.5-muon-muonlr1.0e-2-adamwlr4.0e-2-wd0.1-bs1M-wsd
+60M c0.5   wd       adamw  adamw lr 4.0e-2, wd 0.2                          | PTSweep60M-0.06B-chinchilla-0.5-adamw-lr4.0e-2-wd0.2-bs1M-wsd
+60M c0.5   wd       muon   muon (1.0e-2, 4.0e-2), muon-wd 0.2, adamw-wd 0.1 | PTSweep60M-0.06B-chinchilla-0.5-muon-muonlr1.0e-2-adamwlr4.0e-2-wd0.1-muonwd0.2-bs1M-wsd
+60M c0.5   comp     muon   muon lr 1.0e-2, adamw comp 2.8e-2, wd 0.1        | PTSweep60M-0.06B-chinchilla-0.5-muon-muonlr1.0e-2-adamwlr2.8e-2-wd0.1-bs1M-wsd
+60M c0.5   comp     muon   muon lr 1.0e-2, adamw comp 5.6e-2, wd 0.1        | PTSweep60M-0.06B-chinchilla-0.5-muon-muonlr1.0e-2-adamwlr5.6e-2-wd0.1-bs1M-wsd
+60M c1     wd       adamw  adamw lr 2.0e-2, wd 0                            | PTSweep60M-0.06B-chinchilla-1-adamw-lr2.0e-2-wd0-bs1M-wsd
+60M c1     wd       muon   muon (1.4e-2, 2.0e-2), muon-wd 0, adamw-wd 0.1   | PTSweep60M-0.06B-chinchilla-1-muon-muonlr1.4e-2-adamwlr2.0e-2-wd0.1-muonwd0-bs1M-wsd
+60M c1     wd       adamw  adamw lr 2.0e-2, wd 0.1                          | PTSweep60M-0.06B-chinchilla-1-adamw-lr2.0e-2-wd0.1-bs1M-wsd
+60M c1     wd+comp  muon   muon (1.4e-2, 2.0e-2), muon-wd 0.1, adamw-wd 0.1 | PTSweep60M-0.06B-chinchilla-1-muon-muonlr1.4e-2-adamwlr2.0e-2-wd0.1-bs1M-wsd
+60M c1     wd       adamw  adamw lr 2.0e-2, wd 0.2                          | PTSweep60M-0.06B-chinchilla-1-adamw-lr2.0e-2-wd0.2-bs1M-wsd
+60M c1     wd       muon   muon (1.4e-2, 2.0e-2), muon-wd 0.2, adamw-wd 0.1 | PTSweep60M-0.06B-chinchilla-1-muon-muonlr1.4e-2-adamwlr2.0e-2-wd0.1-muonwd0.2-bs1M-wsd
+60M c1     comp     muon   muon lr 1.4e-2, adamw comp 1.4e-2, wd 0.1        | PTSweep60M-0.06B-chinchilla-1-muon-muonlr1.4e-2-adamwlr1.4e-2-wd0.1-bs1M-wsd
+60M c1     comp     muon   muon lr 1.4e-2, adamw comp 2.8e-2, wd 0.1        | PTSweep60M-0.06B-chinchilla-1-muon-muonlr1.4e-2-adamwlr2.8e-2-wd0.1-bs1M-wsd
+60M c2     wd       adamw  adamw lr 2.0e-2, wd 0                            | PTSweep60M-0.06B-chinchilla-2-adamw-lr2.0e-2-wd0-bs1M-wsd
+60M c2     wd       muon   muon (1.0e-2, 2.0e-2), muon-wd 0, adamw-wd 0.1   | PTSweep60M-0.06B-chinchilla-2-muon-muonlr1.0e-2-adamwlr2.0e-2-wd0.1-muonwd0-bs1M-wsd
+60M c2     wd       adamw  adamw lr 2.0e-2, wd 0.1                          | PTSweep60M-0.06B-chinchilla-2-adamw-lr2.0e-2-wd0.1-bs1M-wsd
+60M c2     wd+comp  muon   muon (1.0e-2, 2.0e-2), muon-wd 0.1, adamw-wd 0.1 | PTSweep60M-0.06B-chinchilla-2-muon-muonlr1.0e-2-adamwlr2.0e-2-wd0.1-bs1M-wsd
+60M c2     wd       adamw  adamw lr 2.0e-2, wd 0.2                          | PTSweep60M-0.06B-chinchilla-2-adamw-lr2.0e-2-wd0.2-bs1M-wsd
+60M c2     wd       muon   muon (1.0e-2, 2.0e-2), muon-wd 0.2, adamw-wd 0.1 | PTSweep60M-0.06B-chinchilla-2-muon-muonlr1.0e-2-adamwlr2.0e-2-wd0.1-muonwd0.2-bs1M-wsd
+60M c2     comp     muon   muon lr 1.0e-2, adamw comp 1.4e-2, wd 0.1        | PTSweep60M-0.06B-chinchilla-2-muon-muonlr1.0e-2-adamwlr1.4e-2-wd0.1-bs1M-wsd
+60M c2     comp     muon   muon lr 1.0e-2, adamw comp 2.8e-2, wd 0.1        | PTSweep60M-0.06B-chinchilla-2-muon-muonlr1.0e-2-adamwlr2.8e-2-wd0.1-bs1M-wsd
+100M c1    wd       adamw  adamw lr 1.4e-2, wd 0                            | PTSweep100M-0.1B-chinchilla-1-adamw-lr1.4e-2-wd0-bs1M-wsd
+100M c1    wd       muon   muon (1.0e-2, 1.4e-2), muon-wd 0, adamw-wd 0.1   | PTSweep100M-0.1B-chinchilla-1-muon-muonlr1.0e-2-adamwlr1.4e-2-wd0.1-muonwd0-bs1M-wsd
+100M c1    wd       adamw  adamw lr 1.4e-2, wd 0.1                          | PTSweep100M-0.1B-chinchilla-1-adamw-lr1.4e-2-wd0.1-bs1M-wsd
+100M c1    wd+comp  muon   muon (1.0e-2, 1.4e-2), muon-wd 0.1, adamw-wd 0.1 | PTSweep100M-0.1B-chinchilla-1-muon-muonlr1.0e-2-adamwlr1.4e-2-wd0.1-bs1M-wsd
+100M c1    wd       adamw  adamw lr 1.4e-2, wd 0.2                          | PTSweep100M-0.1B-chinchilla-1-adamw-lr1.4e-2-wd0.2-bs1M-wsd
+100M c1    wd       muon   muon (1.0e-2, 1.4e-2), muon-wd 0.2, adamw-wd 0.1 | PTSweep100M-0.1B-chinchilla-1-muon-muonlr1.0e-2-adamwlr1.4e-2-wd0.1-muonwd0.2-bs1M-wsd
+100M c1    comp     muon   muon lr 1.0e-2, adamw comp 1.0e-2, wd 0.1        | PTSweep100M-0.1B-chinchilla-1-muon-muonlr1.0e-2-adamwlr1.0e-2-wd0.1-bs1M-wsd
+100M c1    comp     muon   muon lr 1.0e-2, adamw comp 2.0e-2, wd 0.1        | PTSweep100M-0.1B-chinchilla-1-muon-muonlr1.0e-2-adamwlr2.0e-2-wd0.1-bs1M-wsd
