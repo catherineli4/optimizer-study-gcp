@@ -441,6 +441,60 @@ SIZE_PARAMS = {"30M": 0.03e9, "60M": 0.06e9, "100M": 0.1e9,
                "300M": 0.3e9, "600M": 0.6e9}
 
 
+def plot_gap_vs_chinchilla(raw, out):
+    """Degradation GAP, muon minus adamw, vs token budget: one panel per model
+    size, one line per sigma. y = (muon perturbed - muon base) - (adamw
+    perturbed - adamw base) at the same (size, chinchilla, gamma); positive =
+    muon degrades more. A zero rule marks parity. y is per panel: the gap
+    spans ~0.01 nats at 600M and ~1 nat at 30M c32.
+    """
+    ramp = plt.cm.Blues(np.linspace(0.35, 1.0, len(GAMMAS)))
+    sizes = [s for s in SIZES
+             if any(k[1] == s and k[0] is not None for k in raw)]
+    fig, axes = plt.subplots(1, len(sizes), figsize=(3.6 * len(sizes), 4.0),
+                             squeeze=False)
+    for i, size in enumerate(sizes):
+        ax = axes[0][i]
+        chins = sorted({k[2] for k in raw if k[1] == size and k[0] is not None})
+        for gi, g in enumerate(GAMMAS):
+            pts = []
+            for c in chins:
+                vals = {}
+                for opt in ("adamw", "muon"):
+                    v, b = raw.get((g, size, c, opt)), raw.get((None, size, c, opt))
+                    if v is not None and b is not None:
+                        vals[opt] = v - b
+                if len(vals) == 2:
+                    pts.append((c, vals["muon"] - vals["adamw"]))
+            if pts:
+                ax.plot([p[0] for p in pts], [p[1] for p in pts], "o-",
+                        color=ramp[gi], markersize=4.5, linewidth=1.7,
+                        label=f"$\\gamma$={g:g}", zorder=3)
+        ax.axhline(0, color=INK, linewidth=0.9, alpha=0.6, zorder=2)
+        ax.set_xscale("log")
+        ax.set_xticks(chins)
+        ax.set_xticklabels([f"{x:g}" for x in chins], fontsize=8,
+                           rotation=45 if len(chins) > 6 else 0)
+        ax.minorticks_off()
+        ax.set_title(f"{size} ({MODEL_TYPE[size]})", fontsize=10.5, color=INK)
+        ax.grid(True, alpha=0.25, linewidth=0.6)
+        ax.tick_params(labelsize=8, colors=MUTED)
+        ax.set_xlabel("chinchilla (token budget)", fontsize=9.5, color=MUTED)
+        if i == 0:
+            ax.set_ylabel("degradation gap, muon - adamw (nats)",
+                          fontsize=9.5, color=INK)
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, loc="lower center", ncol=len(h), frameon=False,
+               fontsize=9.5, bbox_to_anchor=(0.5, -0.03))
+    fig.suptitle("Perturbation degradation gap, muon - adamw  "
+                 "(positive = muon degrades more)", fontsize=13.5, color=INK)
+    fig.tight_layout(rect=(0, 0.05, 1, 0.97))
+    for ext in ("png", "pdf"):
+        fig.savefig(f"{out}.{ext}", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}.png / .pdf")
+
+
 def plot_curves_vs_size(raw, out, degradation=False, min_sizes=2):
     """Rows = chinchilla, columns = optimizer; x = model size, one line per sigma.
 
@@ -957,6 +1011,7 @@ def main():
          gammas=small, clip_pct=85)
 
     plot_curves(raw, os.path.join(a.out_dir, "perturb-loss-vs-chinchilla"))
+    plot_gap_vs_chinchilla(raw, os.path.join(a.out_dir, "perturb-degradation-gap-vs-chinchilla"))
     plot_curves(raw, os.path.join(a.out_dir, "perturb-degradation-vs-chinchilla"),
                 degradation=True)
 
