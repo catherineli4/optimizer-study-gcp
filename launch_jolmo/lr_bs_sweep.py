@@ -26,7 +26,7 @@ from __future__ import annotations
 import math
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as _dc_fields
 from typing import Any, Dict, Optional, Tuple
 
 from experiments import ArtifactSet
@@ -119,6 +119,10 @@ class LrBatchSweep:
     # Distinguishes subset stages (e.g. "-hi5") from the full grid's stage name.
     # Cell RUN NAMES are unaffected — overlapping cells still dedupe on GCS.
     label_suffix: str = ""
+    # With alias_existing, the MuonExpt3 twin normally wins whenever it exists.
+    # prefer_ptsweep flips that to the pt-lr grid / manifest rule: the PTSweep
+    # run when IT exists, the twin only where no PTSweep run does.
+    prefer_ptsweep: bool = False
 
     def __post_init__(self):
         if self.optimizer not in ("adamw", "muon"):
@@ -273,7 +277,8 @@ class LrBatchSweep:
                     twin = (f"MuonExpt3-{self.model_type}"
                             f"-chinchilla-{_chin_tag(self.chinchilla)}"
                             f"-{self.optimizer}-{lr_tag}-wsd")
-                    if twin in _existing_jolmo_runs():
+                    if twin in _existing_jolmo_runs() and not (
+                            self.prefer_ptsweep and name in _existing_jolmo_runs()):
                         name = twin
                 if name in seen_names:
                     other = seen_names[name]
@@ -395,6 +400,32 @@ HI5_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
         for opt in ("adamw", "muon")
     )
     if s is not None
+)
+
+# Above-optimal subsets for the cells whose tuned LR moved in the 2026-09-17/18
+# retune (pt-lr-dclm-grid.png): 30M muon c4/c8, 60M adamw+muon c0.5/c2. Same
+# hi5 rule at the NEW optimum; bases resolve PTSweep-first like the grid and
+# the grid-models manifest. Stages: lrbs-<mt>-c<chin>-<opt>-hi5chg (+ -evals),
+# umbrellas lrbs-hi5chg-<size> in the launcher; ft_sweep builds the plain and
+# DCLM-replay FT sweeps over these bases (ft-hi5chg-*, ft-replay-hi5chg-*).
+HI5_CHANGED_CELLS: Dict[str, Tuple[Tuple[str, float], ...]] = {
+    "0.03B": (("muon", 4), ("muon", 8)),
+    "0.06B": (("adamw", 0.5), ("muon", 0.5), ("adamw", 2), ("muon", 2)),
+}
+HI5_CHANGED_SWEEPS: Tuple[LrBatchSweep, ...] = tuple(
+    s for s in (
+        above_optimal_sweep(mt, opt, c, prefer_ptsweep=True)
+        for mt, cells in HI5_CHANGED_CELLS.items()
+        for opt, c in cells
+    )
+    if s is not None
+)
+# label_suffix from above_optimal_sweep is "-hi5"; give these their own stage
+# names so they never collide with the 60M HI5_SWEEPS stages.
+HI5_CHANGED_SWEEPS = tuple(
+    LrBatchSweep(**{**{f.name: getattr(s, f.name) for f in _dc_fields(s)},
+                    "label_suffix": "-hi5chg"})
+    for s in HI5_CHANGED_SWEEPS
 )
 
 # 100M above-optimal subsets — chinchillas 2 and 4 only. Stages:

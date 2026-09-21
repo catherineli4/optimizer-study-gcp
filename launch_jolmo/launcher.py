@@ -277,6 +277,16 @@ _hi5_c1_16 = tuple(_s for _s in LRBS_HI5_SWEEPS if _s.chinchilla in (1, 2, 4, 8,
 executor.stage_group("lrbs-hi5-60m-c1-16", tuple(_s.label for _s in _hi5_c1_16))
 executor.stage_group("lrbs-hi5-60m-c1-16-evals",
                      tuple(f"{_s.label}-evals" for _s in _hi5_c1_16))
+# Above-optimal subsets of the cells whose tuned LR moved in the 09-17/18
+# retune (30M muon c4/c8; 60M c0.5/c2). Stages: lrbs-hi5chg-<size> (+ -evals).
+from launch_jolmo.lr_bs_sweep import HI5_CHANGED_SWEEPS as LRBS_HI5CHG_SWEEPS
+for _sweep in LRBS_HI5CHG_SWEEPS:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+executor.stage_group(f"lrbs-hi5chg-{_SIZE.lower()}",
+                     tuple(_s.label for _s in LRBS_HI5CHG_SWEEPS))
+executor.stage_group(f"lrbs-hi5chg-{_SIZE.lower()}-evals",
+                     tuple(f"{_s.label}-evals" for _s in LRBS_HI5CHG_SWEEPS))
 # Muon LR sweep, chinchillas 1-8 at bs1M, adamw component pinned to the retuned
 # adamw optima. Stages: lrbs-0.06B-c<chin>-muon-bs1m (+ -evals).
 from launch_jolmo.lr_bs_sweep import MUON_C18_SWEEPS as _MUON_C18
@@ -440,6 +450,26 @@ if FT_REPLAY_SWEEPS:
                          + tuple(_s.label for _s in FT_REPLAY_SWEEPS))
     executor.stage_group(f"{_rep}-evals",
                          tuple(f"{_s.label}-evals" for _s in FT_REPLAY_SWEEPS))
+# Plain + DCLM-replay FT over the hi5 bases of the retuned cells
+# (ft_sweep.HI5CHG_*). Bases INSIDE the groups: dependencies resolve by identity.
+from launch_jolmo.ft_sweep import HI5CHG_SWEEPS as FT_HI5CHG_SWEEPS
+from launch_jolmo.ft_sweep import HI5CHG_REPLAY_SWEEPS as FT_HI5CHG_REPLAY_SWEEPS
+for _sweep in tuple(FT_HI5CHG_SWEEPS) + tuple(FT_HI5CHG_REPLAY_SWEEPS):
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+if FT_HI5CHG_SWEEPS:
+    _hc = f"ft-hi5chg-{_SIZE.lower()}"
+    executor.stage(f"{_hc}-bases", [_s.base for _s in FT_HI5CHG_SWEEPS])
+    executor.stage_group(_hc, (f"{_hc}-bases",)
+                         + tuple(_s.label for _s in FT_HI5CHG_SWEEPS))
+    executor.stage_group(f"{_hc}-evals",
+                         tuple(f"{_s.label}-evals" for _s in FT_HI5CHG_SWEEPS))
+    _hr = f"ft-replay-hi5chg-{_SIZE.lower()}"
+    executor.stage(f"{_hr}-bases", [_s.base for _s in FT_HI5CHG_REPLAY_SWEEPS])
+    executor.stage_group(_hr, (f"{_hr}-bases",)
+                         + tuple(_s.label for _s in FT_HI5CHG_REPLAY_SWEEPS))
+    executor.stage_group(f"{_hr}-evals",
+                         tuple(f"{_s.label}-evals" for _s in FT_HI5CHG_REPLAY_SWEEPS))
 # Same, over the c1/c2/c4/c8 hi5 bases.
 _hi5_c1248_base_names = {
     _m.run_name

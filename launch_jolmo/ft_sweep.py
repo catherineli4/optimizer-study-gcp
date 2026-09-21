@@ -535,6 +535,35 @@ if _WANT_FT:
 
 REPLAY_SWEEPS: Tuple[FtSweep, ...] = tuple(_replay_sweeps)
 
+
+# ---------------------------------------------------------------------------
+# Plain FT and DCLM-replay FT over the above-optimal (hi5) bases of the cells
+# whose tuned LR moved in the 2026-09-17/18 retune (lr_bs_sweep
+# HI5_CHANGED_SWEEPS). Bases are taken as the sweep names them (PTSweep-first,
+# like the grid manifest) — NOT passed through _canonical_base, which would
+# prefer the old-cluster MuonExpt3 twin. Plain cells carry the standard CPT
+# run names, so any that exist already are skipped by the exists-check.
+# ---------------------------------------------------------------------------
+
+_hi5chg_ft, _hi5chg_replay = [], []
+if _WANT_FT:
+    from launch_jolmo.lr_bs_sweep import HI5_CHANGED_SWEEPS as _HI5CHG
+    _seen_c = set()
+    for _hs in _HI5CHG:
+        for _m in _hs.models():
+            if _m.run_name in _seen_c:
+                continue
+            _seen_c.add(_m.run_name)
+            _hi5chg_ft.append(FtSweep(base=_m, label_suffix="-hi5chg"))
+            _hi5chg_replay.append(FtSweep(
+                base=_m, replay_fractions=FT_REPLAY_SWEEP_FRACTIONS,
+                label_suffix="-hi5chg-replay"))
+    if _hi5chg_ft:
+        print(f"[ft-hi5chg] {len(_hi5chg_ft)} above-optimal base(s) of the retuned cells")
+
+HI5CHG_SWEEPS: Tuple[FtSweep, ...] = tuple(_hi5chg_ft)
+HI5CHG_REPLAY_SWEEPS: Tuple[FtSweep, ...] = tuple(_hi5chg_replay)
+
 # ---------------------------------------------------------------------------
 # Cross-size batch-size FT study: the best-LR pretrain at each
 # (size, chinchilla, batch, optimizer) cell for 30M c2, 60M c1/2/4, 100M c2.
