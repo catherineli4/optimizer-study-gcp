@@ -428,6 +428,25 @@ HI5_CHANGED_SWEEPS = tuple(
     for s in HI5_CHANGED_SWEEPS
 )
 
+# 600M chinchilla-2 muon LR fill at the reference batch, adamw component
+# pinned to the table's 2.5e-3. Existing MuonExpt3 twins (1.4e-2, 2e-2,
+# 2.8e-2) are aliased rather than retrained; 1e-2 is new. Stages:
+# lrbs-0.6B-c2-muon-c2fill (+ -evals), run with OPTIM_SIZE=600M.
+MUON_600M_C2_SWEEPS: Tuple[LrBatchSweep, ...] = (
+    LrBatchSweep(model_type="0.6B", optimizer="muon", chinchilla=2,
+                 lrs=(1e-2, 1.4e-2, 2e-2, 2.8e-2), bs_multipliers=(1,),
+                 num_processes=8, prefer_ptsweep=True, label_suffix="-c2fill"),
+)
+
+# 600M chinchilla-2 muon 2e-2 / 2.8e-2 (adamw component 2.5e-3): both exist
+# as MuonExpt3-named runs and are aliased here so their DCLM evals have a
+# stage. Nothing trains. Stages: lrbs-0.6B-c2-muon-c2eval (+ -evals).
+MUON_600M_C2_EVAL_SWEEPS: Tuple[LrBatchSweep, ...] = (
+    LrBatchSweep(model_type="0.6B", optimizer="muon", chinchilla=2,
+                 lrs=(2e-2, 2.8e-2), bs_multipliers=(1,),
+                 num_processes=8, prefer_ptsweep=True, label_suffix="-c2eval"),
+)
+
 # 100M above-optimal subsets — chinchillas 2 and 4 only. Stages:
 # lrbs-0.1B-c<chin>-<opt>-hi5 (+ -evals), umbrella lrbs-hi5-100m in the
 # launcher. Under a non-100M $OPTIM_SIZE these build 0 models (size_ok guard).

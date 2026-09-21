@@ -277,6 +277,19 @@ _hi5_c1_16 = tuple(_s for _s in LRBS_HI5_SWEEPS if _s.chinchilla in (1, 2, 4, 8,
 executor.stage_group("lrbs-hi5-60m-c1-16", tuple(_s.label for _s in _hi5_c1_16))
 executor.stage_group("lrbs-hi5-60m-c1-16-evals",
                      tuple(f"{_s.label}-evals" for _s in _hi5_c1_16))
+# 600M c2 muon LR fill (1e-2 new; 1.4e-2/2e-2/2.8e-2 alias existing twins).
+from launch_jolmo.lr_bs_sweep import MUON_600M_C2_SWEEPS as _MUON_600M_C2
+for _sweep in _MUON_600M_C2:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
+executor.stage_group("lrbs-muon-600m-c2", tuple(_s.label for _s in _MUON_600M_C2))
+executor.stage_group("lrbs-muon-600m-c2-evals",
+                     tuple(f"{_s.label}-evals" for _s in _MUON_600M_C2))
+# 600M c2 muon 2e-2 / 2.8e-2 evals (existing MuonExpt3 runs, aliased).
+from launch_jolmo.lr_bs_sweep import MUON_600M_C2_EVAL_SWEEPS as _MUON_600M_C2E
+for _sweep in _MUON_600M_C2E:
+    executor.stage(_sweep.label, _sweep.models())
+    executor.stage(f"{_sweep.label}-evals", _sweep.evals())
 # Above-optimal subsets of the cells whose tuned LR moved in the 09-17/18
 # retune (30M muon c4/c8; 60M c0.5/c2). Stages: lrbs-hi5chg-<size> (+ -evals).
 from launch_jolmo.lr_bs_sweep import HI5_CHANGED_SWEEPS as LRBS_HI5CHG_SWEEPS
