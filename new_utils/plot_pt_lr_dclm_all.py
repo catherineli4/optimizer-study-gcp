@@ -184,9 +184,7 @@ EXCLUDE_LE = {
 # Whole (size, chinchilla) cells left out of every figure: no LR sweep exists
 # there, only the single tuned point per optimizer, so a panel has nothing to
 # show. Keyed (size, chinchilla).
-SKIP_CELLS = {
-    ("600M", 2.0),
-}
+SKIP_CELLS = set()   # 600M c2 was here until its adamw sweep (7e-4..5e-3) got evals
 
 
 # Points to star: {size: {(chinchilla, optimizer, lr)}} -- filled by load() for
