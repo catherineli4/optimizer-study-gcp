@@ -107,15 +107,19 @@ def tuned_lrs(size):
     return {"adamw": {}, "muon": {}}
 
 
-def table_summary(size, data):
+def table_summary(size, data, only_chins=None):
     """{opt: {chinchilla: (table_lr, loss)}} for the LRs the table declares.
 
     Unlike the measured summary this does NOT take the argmin — it reports the
     loss of whatever LR the table names, so the two figures can be compared.
+    ``only_chins`` restricts the lookup (and the missing-eval report) to those
+    budgets.
     """
     want, out, missing = tuned_lrs(size), {}, []
     for opt in ("adamw", "muon"):
         for chin, lr in sorted(want.get(opt, {}).items()):
+            if only_chins is not None and chin not in only_chins:
+                continue
             series = data.get(chin, {}).get(opt, {})
             hit = next((v for x, v in series.items() if abs(x - lr) <= 1e-12), None)
             if hit is None:
@@ -203,7 +207,8 @@ MARK_LEGACY = False   # --mark-legacy: open markers on MuonExpt3-only points
 MARK_LOWEST = False   # --mark-lowest: square on each curve's lowest-loss LR
 
 
-def load(size, d, only_schema=None, tuned_component=None, return_others=False):
+def load(size, d, only_schema=None, tuned_component=None, return_others=False,
+         honor_skip=True):
     """{chinchilla: {optimizer: {lr: [losses]}}} — a list per LR because the
     two naming schemas are independent runs of the same recipe.
 
@@ -220,7 +225,7 @@ def load(size, d, only_schema=None, tuned_component=None, return_others=False):
                 continue
             cell = json.load(open(os.path.join(d, fn))).get(
                 "by_label", {}).get(LABEL)
-            if cell and ((size, float(m.group(1))) in SKIP_CELLS or
+            if cell and ((honor_skip and (size, float(m.group(1))) in SKIP_CELLS) or
                          (size, float(m.group(1)), opt, float(m.group(2))) in EXCLUDE or
                          float(m.group(2)) <= EXCLUDE_LE.get(
                              (size, float(m.group(1)), opt), -1.0)):
@@ -750,9 +755,28 @@ def main():
         s = plot_size(size, data, ntok,
                       os.path.join(a.out_dir, f"pt-lr-dclm-{size}"),
                       split_schema=size in (a.split_schema or []))
+        # SKIP_CELLS keeps sweep-less cells (600M c2) out of the LR grid, but
+        # their tuned points are still valid for the best-loss-vs-budget
+        # summaries, so fold those cells' table-LR losses back in here.
+        skipped = {c for sz, c in SKIP_CELLS if sz == size}
+        if skipped:
+            STARRED_keep = dict(STARRED)
+            full, _ = load(size, d, only_schema=keep, tuned_component=tc,
+                           honor_skip=False)
+            STARRED.clear(); STARRED.update(STARRED_keep)
+            extra = table_summary(size, {c: full[c] for c in skipped if c in full},
+                                  only_chins=skipped)
+            for opt, cells in extra.items():
+                for chin, v in cells.items():
+                    (s or {}).setdefault(opt, {})[chin] = v
         if s:
             all_summary[size] = s
-        ts = table_summary(size, data)
+        ts = table_summary(size, data,
+                           only_chins={c for c in tuned_lrs(size).get("adamw", {})
+                                       if c not in skipped} if skipped else None)
+        for opt, cells in (extra.items() if skipped else ()):
+            for chin, v in cells.items():
+                ts.setdefault(opt, {})[chin] = v
         if ts:
             all_table[size] = ts
     plot_grid(all_data, all_ntok, os.path.join(a.out_dir, "pt-lr-dclm-grid"),
