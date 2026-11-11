@@ -78,13 +78,20 @@ def _build_tokenizer_yaml(tokenizer_id: str) -> Dict[str, Any]:
     return d
 
 
-def _build_model_spec(model_type: str, vocab_size: int) -> Dict[str, Any]:
+def _build_model_spec(model_type: str, vocab_size: int,
+                      init_seed: Optional[int] = None) -> Dict[str, Any]:
+    """``init_seed`` seeds the model's OWN parameter-init generator
+    (``TransformerConfig.init_seed``, engine default 0 when omitted). It is
+    distinct from the top-level ``init_seed`` in the YAML, which only runs
+    ``seed_all`` on the process-global RNGs. Omitted (None) -> key not written,
+    so every existing config stays byte-identical."""
     arch = MODEL_ARCHS[model_type]
     return {
         "_CLASS_": "olmo_core.nn.transformer.config.TransformerConfig",
         "d_model": arch.d_model,
         "vocab_size": vocab_size,
         "n_layers": arch.n_layers,
+        **({"init_seed": init_seed} if init_seed is not None else {}),
         "block": {
             "_CLASS_": "olmo_core.nn.transformer.config.TransformerBlockConfig",
             "name": "reordered_norm",
@@ -187,7 +194,12 @@ def _build_optimizer_spec(
     return spec
 
 
-def _build_scheduler_spec(scheduler: str, warmup_steps: int) -> Dict[str, Any]:
+def _build_scheduler_spec(scheduler: str, warmup_steps: int,
+                          wsd_decay_min_lr_fraction: Optional[float] = None) -> Dict[str, Any]:
+    """``wsd_decay_min_lr_fraction`` (WSD only): decay each param group to
+    ``fraction * its max LR`` instead of the absolute ``decay_min_lr`` (0.0).
+    Needs the ``WSD.decay_min_lr_fraction`` field in JOLMo's scheduler.py.
+    None -> key not written, so existing configs are unchanged."""
     name = scheduler.lower()
     if name == "cosine":
         return {"_CLASS_": "olmo_core.optim.CosWithWarmup", "warmup_steps": warmup_steps}
@@ -200,11 +212,14 @@ def _build_scheduler_spec(scheduler: str, warmup_steps: int) -> Dict[str, Any]:
             "alpha_f": 0.1,
         }
     if name == "wsd":
-        return {
+        spec = {
             "_CLASS_": "olmo_core.optim.WSD",
             "warmup": warmup_steps,
             "decay_min_lr": 0.0,
         }
+        if wsd_decay_min_lr_fraction is not None:
+            spec["decay_min_lr_fraction"] = wsd_decay_min_lr_fraction
+        return spec
     raise ValueError(
         "Unsupported scheduler "
         f"'{scheduler}'. Supported: ['cosine', 'constant', 'inv_sqrt', 'wsd']"
@@ -510,6 +525,15 @@ class JolmoModel(Artifact):
 
     experiment_name: Optional[str] = None
     init_seed: int = 12536
+    # Training seed for seed replicates. When set, it is written to all three RNG
+    # entry points of the YAML: model.init_seed (parameter-init generator),
+    # data_loader.seed (instance shuffle) and the top-level init_seed (seed_all).
+    # None keeps the historical values (0 / 0 / init_seed), so every existing
+    # artifact's YAML is unchanged. See docs/seed_replicates_60m.md.
+    seed: Optional[int] = None
+    # WSD-only: decay every param group to this fraction of its max LR instead of
+    # to 0. None keeps the historical absolute floor of 0.0.
+    wsd_decay_min_lr_fraction: Optional[float] = None
     weight_distance_interval: Optional[int] = 100
 
     # --- Post-processing flags ---
@@ -697,12 +721,13 @@ class JolmoModel(Artifact):
         )
 
         cfg: Dict[str, Any] = {
-            "model": _build_model_spec(self.model_type, vocab_size),
+            "model": _build_model_spec(self.model_type, vocab_size,
+                                       init_seed=self.seed),
             "dataset": dataset_spec,
             "data_loader": {
                 "_CLASS_": "olmo_core.data.NumpyDataLoaderConfig",
                 "global_batch_size": self.global_batch_size,
-                "seed": 0,
+                "seed": self.seed if self.seed is not None else 0,
                 "num_workers": 4,
             },
             "train_module_type": "normal",
@@ -719,7 +744,9 @@ class JolmoModel(Artifact):
                     self.optimizer, self.learning_rate, self.betas, self.weight_decay,
                     muon_lr=self.muon_lr, muon_weight_decay=self.muon_weight_decay,
                 ),
-                "scheduler": _build_scheduler_spec(self.scheduler, self.warmup_steps),
+                "scheduler": _build_scheduler_spec(
+                    self.scheduler, self.warmup_steps,
+                    wsd_decay_min_lr_fraction=self.wsd_decay_min_lr_fraction),
                 "compile_model": self.compile_model,
                 "dp_config": {
                     "_CLASS_": "olmo_core.train.train_module.transformer.config.TransformerDataParallelConfig",
@@ -757,7 +784,7 @@ class JolmoModel(Artifact):
                     },
                 },
             },
-            "init_seed": self.init_seed,
+            "init_seed": self.seed if self.seed is not None else self.init_seed,
         }
 
         # Weight distance tracking
@@ -825,6 +852,8 @@ class JolmoModel(Artifact):
                 "num_processes": self.num_processes,
                 "tokenizer": self.tokenizer,
                 "init_seed": self.init_seed,
+                "seed": self.seed,
+                "wsd_decay_min_lr_fraction": self.wsd_decay_min_lr_fraction,
                 "muon_lr": self.muon_lr,
                 "muon_weight_decay": self.muon_weight_decay,
                 "base_model": self.base_model.model_name if self.base_model else None,

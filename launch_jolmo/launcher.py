@@ -179,6 +179,17 @@ else:
 
 executor = SlurmExecutor(setup_command=setup_command)
 
+# Compatibility: older `experiments` checkouts (e.g. the Feb-2026 one installed
+# on babel) have no SlurmExecutor.stage_group. A group is just the union of its
+# member stages, so provide that when missing; newer checkouts keep their own.
+if not hasattr(executor, "stage_group"):
+    def _stage_group(self, name, members):
+        missing = [m for m in members if m not in self._stages]
+        if missing:
+            raise KeyError(f"stage_group {name!r}: unknown member stage(s) {missing}")
+        self._stages[name] = [a for m in members for a in self._stages[m]]
+    type(executor).stage_group = _stage_group
+
 # --- Pretraining (DCLM) ---
 executor.stage("pretrain-adamw-wsd",    pretrain_adamw_wsd)
 executor.stage("pretrain-adamw-cosine", pretrain_adamw_cosine)
@@ -652,6 +663,19 @@ if FT_TUNED_SWEEPS:
                          + tuple(_s.label for _s in FT_TUNED_SWEEPS))
     executor.stage_group("ft-tuned-evals",
                          tuple(f"{_s.label}-evals" for _s in FT_TUNED_SWEEPS))
+
+# --- Seed replicates + WSD decay-floor variants of the tuned 60M c1/c2/c4 bases
+# (both optimizers; docs/seed_replicates_60m.md). Names carry -seed<s> /
+# -decaymin0.1; stages resolve empty unless OPTIM_SIZE=60M. Each group holds the
+# models, their evals, the gsm8k finetunes and the finetune evals, so one launch
+# of the group resolves every dependency by object identity.
+from launch_jolmo.seed_replicates import (
+    seed_rep_stages, decaymin_stages, GROUP_MEMBERS as _SR_MEMBERS)
+for _prefix, _stages in (("seed-rep-60m", seed_rep_stages),
+                         ("decaymin-60m", decaymin_stages)):
+    for _name, _set in _stages.items():
+        executor.stage(_name, _set)
+    executor.stage_group(_prefix, tuple(f"{_prefix}-{m}" for m in _SR_MEMBERS))
 
 if __name__ == "__main__":
     executor.auto_cli()
